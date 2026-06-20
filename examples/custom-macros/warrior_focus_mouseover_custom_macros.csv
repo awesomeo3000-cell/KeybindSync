@@ -1,0 +1,6 @@
+section,loader_action,macro_name,macro_text,enabled
+selected,SwapWeapon,Focus Pummel,"/cast [@focus,harm] Pummel",true
+selected,Charge,Focus Storm Bolt,"/cast [@focus,harm] Storm Bolt",true
+selected,Slam,Mouseover Pummel,"/cast [@mouseover,harm] Pummel",true
+selected,Whirlwind,Focus Storm Bolt Whirlwind,"/cast [@focus,harm] Storm Bolt",true
+selected,HeroicLeap,Focus Execute,"/cast [@focus,harm] Execute",true

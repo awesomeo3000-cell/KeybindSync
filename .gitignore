@@ -1,0 +1,37 @@
+__pycache__/
+*.py[cod]
+*.pyo
+
+.venv/
+venv/
+env/
+
+build/
+dist/
+*.spec
+
+reports/
+*.bak
+*.bak-*
+*.tmp
+*.log
+
+wow_keybind_sync_settings.json
+wow_keybind_sync_settings.json.bak
+
+*.exe
+*.zip
+*.7z
+
+# Local/private game files. Keep these out of source control.
+Config.ini
+Debounce.lua
+BindPad.lua
+WTF/
+Interface/
+
+# OS/editor noise.
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

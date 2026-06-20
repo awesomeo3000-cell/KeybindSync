@@ -1,0 +1,6 @@
+section,loader_action,macro_name,macro_text,enabled
+selected,Universal1,Verdant Embrace,/cast Verdant Embrace,true
+selected,Universal2,Time Skip,/cast Time Skip,true
+selected,Deep Breath | Breath of Eons,Breath of Eons,/cast Breath of Eons,true
+selected,Interrupt,Mouseover Quell,"/cast [@mouseover,harm][]Quell",true
+selected,Disintegrate | Eruption,Disintegrate,"/cast [@mouseover,harm,nodead][] Disintegrate",true

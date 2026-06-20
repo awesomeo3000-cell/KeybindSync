@@ -1,0 +1,6 @@
+section,loader_action,macro_name,macro_text,enabled
+# AI INSTRUCTIONS,Upload this CSV template with the profile PDF or custom macro notes.,Ask the AI to fill import-ready rows using the header above.,Return CSV only. Do not invent mappings. Only include mappings clearly stated in the source.,
+# FIELD RULES,loader_action must be the loader/pixel/action being reused and must match Config.ini.,macro_name is the in-game macro name to create.,macro_text is the exact macro body. Use literal \n for multi-line macros.,true
+# SECTION RULES,Use the exact class/spec section when known.,Use selected or current if the user will import after choosing the right class/spec.,Use General only for supported global targeting actions.,
+Warrior - Fury,Bitter Immunity,Rend,/cast Rend,true
+General,Target Arena1,Target Arena 1,/target arena1,true

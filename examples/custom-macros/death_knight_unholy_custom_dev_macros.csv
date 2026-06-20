@@ -1,0 +1,20 @@
+section,loader_action,macro_name,macro_text,enabled
+Death Knight - Unholy,Universal1,Putrefy,/cast Putrefy,true
+Death Knight - Unholy,Interrupt,Mind Freeze,/cast [@mouseover] Mind Freeze,true
+Death Knight - Unholy,Asphyxiate,Asphyxiate,/cast [@mouseover] Asphyxiate,true
+Death Knight - Unholy,Death Grip,Death Grip,/cast [@mouseover] Death Grip,true
+Death Knight - Unholy,Defile / Death and Decay,Death and Decay,/cast [@cursor] Death and Decay,true
+Death Knight - Unholy,Strike 2 Rune,Festering Strike,/cast Festering Strike,true
+Death Knight - Unholy,Strike 1 Rune,Scourge Strike,/cast Scourge Strike,true
+Death Knight - Unholy,Anti-Magic Zone,Anti-Magic Zone,/cast [@player] Anti-Magic Zone,true
+Death Knight - Unholy,Blinding Sleet,Blinding Sleet,/cast Blinding Sleet,true
+Death Knight - Unholy,Icebound Fortitude,Icebound Fortitude,/cast Icebound Fortitude,true
+Death Knight - Unholy,Anti-Magic Shell,Anti-Magic Shell,/cast Anti-Magic Shell,true
+Death Knight - Unholy,Army of the Dead,Army of the Dead,/cast Army of the Dead,true
+Death Knight - Unholy,Dark Transformation,Dark Transformation,/cast Dark Transformation,true
+Death Knight - Unholy,Soul Reaper,Soul Reaper,/cast Soul Reaper,true
+Death Knight - Unholy,Outbreak,Outbreak,/cast Outbreak,true
+Death Knight - Unholy,Death Coil,Death Coil,/cast Death Coil,true
+Death Knight - Unholy,Epidemic,Epidemic,/cast Epidemic,true
+Death Knight - Unholy,Raise Dead,Raise Dead,/cast Raise Dead,true
+Death Knight - Unholy,Death Strike,Death Strike,/cast Death Strike,true
