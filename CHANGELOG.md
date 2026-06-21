@@ -2,10 +2,14 @@
 
 ## Unreleased
 
+## 1.2.5
+
 - Added preflight setup checks.
 - Added Backup Manager.
 - Added redacted support bundle export.
 - Added keyboard layout support work in progress.
+- Added Disable Selected and Disable All controls to Spell / Loader Actions.
+- Preserved Spell / Loader Actions scroll position after toggling actions.
 
 ## 1.2.4
 

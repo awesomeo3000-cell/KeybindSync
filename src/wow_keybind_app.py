@@ -21,7 +21,7 @@ import customtkinter as ctk
 import wow_keybind_sync as sync
 
 
-APP_VERSION = "1.2.4"
+APP_VERSION = "1.2.5"
 
 
 GLOBAL_ACTIONS = [
@@ -1488,7 +1488,7 @@ class App(ctk.CTk):
     def _build_advanced_actions_card(self, card: ctk.CTkFrame) -> None:
         ctk.CTkLabel(
             card,
-            text="Turn off actions you do not want this spec to bind. Double-click an action, or select several and use Toggle Selected.",
+            text="Turn off actions you do not want this spec to bind. Double-click an action, select several, or use Disable All to start from a blank slate.",
             text_color=ctk_theme("muted"),
             anchor="w",
             wraplength=780,
@@ -1526,10 +1526,11 @@ class App(ctk.CTk):
 
         button_row = ctk.CTkFrame(card, fg_color="transparent")
         button_row.grid(row=3, column=0, columnspan=4, sticky="ew", padx=14, pady=(0, 14))
-        ctk.CTkButton(button_row, text="Toggle Selected", height=32, corner_radius=8, command=self.toggle_selected_actions).pack(side="left")
+        ctk.CTkButton(button_row, text="Toggle Selected", width=120, height=32, corner_radius=8, command=self.toggle_selected_actions).pack(side="left")
         ctk.CTkButton(
             button_row,
             text="Enable Selected",
+            width=122,
             height=32,
             corner_radius=8,
             fg_color=ctk_theme("secondary_button"),
@@ -1538,12 +1539,33 @@ class App(ctk.CTk):
         ).pack(side="left", padx=(8, 0))
         ctk.CTkButton(
             button_row,
+            text="Disable Selected",
+            width=124,
+            height=32,
+            corner_radius=8,
+            fg_color=ctk_theme("secondary_button"),
+            hover_color=ctk_theme("secondary_button_hover"),
+            command=self.disable_selected_actions,
+        ).pack(side="left", padx=(8, 0))
+        ctk.CTkButton(
+            button_row,
             text="Enable All",
+            width=96,
             height=32,
             corner_radius=8,
             fg_color=ctk_theme("secondary_button"),
             hover_color=ctk_theme("secondary_button_hover"),
             command=self.enable_all_actions,
+        ).pack(side="left", padx=(8, 0))
+        ctk.CTkButton(
+            button_row,
+            text="Disable All",
+            width=96,
+            height=32,
+            corner_radius=8,
+            fg_color=ctk_theme("secondary_button"),
+            hover_color=ctk_theme("secondary_button_hover"),
+            command=self.disable_all_actions,
         ).pack(side="left", padx=(8, 0))
         card.columnconfigure(0, weight=1)
         card.rowconfigure(2, weight=1)
@@ -3751,9 +3773,11 @@ class App(ctk.CTk):
             return loader_action in GLOBAL_CUSTOM_TARGETING_ACTIONS
         return False
 
-    def refresh_action_list(self) -> None:
+    def refresh_action_list(self, preserve_view: bool = False) -> None:
         if not hasattr(self, "action_list"):
             return
+        view_start = self.action_list.yview()[0] if preserve_view else 0.0
+        selected_indices = set(self.action_list.curselection()) if preserve_view else set()
         section = self.section.get().strip()
         names = self.current_action_names()
         disabled = self.disabled_actions_by_section.get(section, set())
@@ -3767,6 +3791,11 @@ class App(ctk.CTk):
             self.action_list.insert("end", f"[{marker}] {name}")
             if name in disabled:
                 self.action_list.itemconfig(index, foreground=THEME["muted"])
+        if preserve_view:
+            for index in selected_indices:
+                if index < len(names):
+                    self.action_list.selection_set(index)
+            self.action_list.yview_moveto(view_start)
 
     def toggle_selected_actions(self) -> None:
         section = self.section.get().strip()
@@ -3783,7 +3812,7 @@ class App(ctk.CTk):
                 disabled.add(name)
         self.disabled_actions_by_section[section] = disabled
         self.save_current_settings()
-        self.refresh_action_list()
+        self.refresh_action_list(preserve_view=True)
 
     def enable_selected_actions(self) -> None:
         section = self.section.get().strip()
@@ -3795,7 +3824,19 @@ class App(ctk.CTk):
                 disabled.discard(self.action_visible_names[index])
         self.disabled_actions_by_section[section] = disabled
         self.save_current_settings()
-        self.refresh_action_list()
+        self.refresh_action_list(preserve_view=True)
+
+    def disable_selected_actions(self) -> None:
+        section = self.section.get().strip()
+        if not section or not self.action_visible_names:
+            return
+        disabled = set(self.disabled_actions_by_section.get(section, set()))
+        for index in self.action_list.curselection():
+            if index < len(self.action_visible_names):
+                disabled.add(self.action_visible_names[index])
+        self.disabled_actions_by_section[section] = disabled
+        self.save_current_settings()
+        self.refresh_action_list(preserve_view=True)
 
     def enable_all_actions(self) -> None:
         section = self.section.get().strip()
@@ -3803,7 +3844,15 @@ class App(ctk.CTk):
             return
         self.disabled_actions_by_section[section] = set()
         self.save_current_settings()
-        self.refresh_action_list()
+        self.refresh_action_list(preserve_view=True)
+
+    def disable_all_actions(self) -> None:
+        section = self.section.get().strip()
+        if not section or not self.action_visible_names:
+            return
+        self.disabled_actions_by_section[section] = set(self.action_visible_names)
+        self.save_current_settings()
+        self.refresh_action_list(preserve_view=True)
 
     def selected_action_names_for_section(self, section: str, allowed_names: set[str] | None = None) -> set[str]:
         ggl_config = Path(self.ggl_config.get())
