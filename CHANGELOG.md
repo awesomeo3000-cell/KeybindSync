@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Cleaned stale BindPad managed macros across all character-specific tabs before writing new binds.
+- Added cleanup for older `GGL: ` BindPad macro names.
+- Added a preflight warning when active loader actions would create duplicate addon macro names.
+- Fixed BindPad support for non-retail sections like `TBC Paladin`.
+
 ## 1.2.5
 
 - Added preflight setup checks.

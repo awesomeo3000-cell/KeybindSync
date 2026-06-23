@@ -21,7 +21,7 @@ import customtkinter as ctk
 import wow_keybind_sync as sync
 
 
-APP_VERSION = "1.2.5"
+APP_VERSION = "1.2.6-dev.2"
 
 
 GLOBAL_ACTIONS = [
@@ -660,10 +660,14 @@ def run_once(
         loader_context_sections = {section}
         if section != "General":
             loader_context_sections.add("General")
+    addon_label = "BindPad" if macro_addon == "BindPad" else "Debounce"
     loader_reserved_keys = sync.collect_ggl_reserved_keys(sections, loader_context_sections, entries)
     effective_blocked_keys.update(loader_reserved_keys)
-    class_file, spec_index = sync.section_to_debounce_target(section)
-    addon_label = "BindPad" if macro_addon == "BindPad" else "Debounce"
+    class_file: str | None = None
+    if macro_addon == "BindPad":
+        spec_index = sync.bindpad_spec_index_for_section(section)
+    else:
+        class_file, spec_index = sync.section_to_debounce_target(section)
     planned_macro_names = {entry.name for entry in entries}
     if macro_overrides:
         planned_macro_names.update(override.name for override in macro_overrides.values() if override.name)
@@ -761,6 +765,8 @@ def run_once(
             sync.write_text(addon_path, "BindPadVars = " + sync.dump_lua(vars_table) + "\n", addon_encoding)
         else:
             vars_table = sync.parse_debounce_vars(addon_text)
+            if class_file is None:
+                raise RuntimeError("Could not determine the Debounce class/spec target.")
             sync.update_debounce(
                 vars_table,
                 class_file,
@@ -2987,6 +2993,25 @@ class App(ctk.CTk):
                 duplicates.append(f"{key.human(layout)} -> {joined}")
         return duplicates
 
+    def duplicate_addon_macro_names(self, active_actions: dict[str, set[str]]) -> list[str]:
+        seen: dict[str, list[str]] = {}
+        for section, action_names in active_actions.items():
+            overrides = self.custom_overrides_for_section(section)
+            for action_name in sorted(action_names):
+                override = overrides.get(action_name)
+                macro_name = override.name.strip() if override and override.name.strip() else action_name
+                seen.setdefault(macro_name.lower(), []).append(f"{section}: {action_name}")
+        duplicates: list[str] = []
+        for owners in seen.values():
+            if len(owners) <= 1:
+                continue
+            label = owners[0].split(": ", 1)[-1]
+            joined = ", ".join(owners[:3])
+            if len(owners) > 3:
+                joined += f", +{len(owners) - 3} more"
+            duplicates.append(f"{label} -> {joined}")
+        return duplicates
+
     def custom_macro_preflight_errors(
         self,
         sections: dict[str, list[sync.GglEntry]],
@@ -3029,10 +3054,17 @@ class App(ctk.CTk):
 
         if section:
             self.add_preflight_item(items, "Class/spec", "OK", section)
-            try:
-                sync.section_to_debounce_target(section)
-            except (RuntimeError, ValueError, SystemExit) as exc:
-                self.add_preflight_item(items, "Class/spec target", "FAIL", str(exc), True)
+            if macro_addon == "Debounce":
+                try:
+                    sync.section_to_debounce_target(section)
+                except (RuntimeError, ValueError, SystemExit) as exc:
+                    self.add_preflight_item(items, "Class/spec target", "FAIL", str(exc), True)
+            else:
+                spec_index = sync.bindpad_spec_index_for_section(section)
+                if spec_index is None:
+                    self.add_preflight_item(items, "BindPad target", "OK", "General BindPad binds.")
+                else:
+                    self.add_preflight_item(items, "BindPad target", "OK", f"Character-specific BindPad tab {spec_index}.")
         else:
             self.add_preflight_item(items, "Class/spec", "FAIL", "Choose a class/spec first.", True)
 
@@ -3149,6 +3181,15 @@ class App(ctk.CTk):
                 self.add_preflight_item(items, "Duplicate loader hotkeys", "WARN", detail)
             else:
                 self.add_preflight_item(items, "Duplicate loader hotkeys", "OK", "No duplicate hotkeys in the active selection.")
+
+            duplicate_macro_names = self.duplicate_addon_macro_names(active_actions)
+            if duplicate_macro_names:
+                detail = "; ".join(duplicate_macro_names[:3])
+                if len(duplicate_macro_names) > 3:
+                    detail += f"; +{len(duplicate_macro_names) - 3} more"
+                self.add_preflight_item(items, "Duplicate addon macro names", "WARN", detail)
+            else:
+                self.add_preflight_item(items, "Duplicate addon macro names", "OK", "No duplicate macro names in the active selection.")
 
             custom_count, custom_errors = self.custom_macro_preflight_errors(sections, section)
             if custom_errors:

@@ -1183,24 +1183,43 @@ def resolve_section(args: argparse.Namespace) -> str:
     raise SystemExit("Pass --section, for example: --section \"Warrior - Fury\"")
 
 
-def section_to_debounce_target(section: str) -> tuple[str, int | None]:
+def retail_debounce_target_from_section(section: str) -> tuple[str, int | None] | None:
     if section.lower() == "general":
         return "GENERAL", None
+    if " - " not in section:
+        return None
+    class_name, spec_name = section.split(" - ", 1)
+    class_file = CLASS_FILES.get(class_name)
+    if not class_file:
+        return None
+    specs = SPEC_INDEX[class_name]
+    try:
+        spec_index = [s.lower() for s in specs].index(spec_name.lower()) + 1
+    except ValueError:
+        return None
+    return class_file, spec_index
+
+
+def section_to_debounce_target(section: str) -> tuple[str, int | None]:
+    target = retail_debounce_target_from_section(section)
+    if target:
+        return target
     if " - " not in section:
         raise SystemExit(
             f"Cannot infer Debounce class/spec from section {section!r}. "
             "Use a retail section like \"Warrior - Fury\"."
         )
-    class_name, spec_name = section.split(" - ", 1)
-    class_file = CLASS_FILES.get(class_name)
-    if not class_file:
-        raise SystemExit(f"Unsupported class in section {section!r}")
-    specs = SPEC_INDEX[class_name]
-    try:
-        spec_index = [s.lower() for s in specs].index(spec_name.lower()) + 1
-    except ValueError as exc:
-        raise SystemExit(f"Unsupported spec in section {section!r}") from exc
-    return class_file, spec_index
+    raise SystemExit(f"Unsupported class/spec in section {section!r}")
+
+
+def bindpad_spec_index_for_section(section: str) -> int | None:
+    target = retail_debounce_target_from_section(section)
+    if target:
+        _class_file, spec_index = target
+        return spec_index
+    if section.lower() == "general":
+        return None
+    return 1
 
 
 def select_entries(
@@ -1567,12 +1586,35 @@ def bindpad_numeric_slots(table: dict[Any, Any]) -> list[Any]:
     return [value for _, value in sorted(slots, key=lambda item: item[0])]
 
 
+def bindpad_name_cleanup_variants(names: set[str]) -> set[str]:
+    variants = set(names)
+    for name in names:
+        if name.startswith(OLD_MANAGED_PREFIX):
+            variants.add(name.removeprefix(OLD_MANAGED_PREFIX))
+        else:
+            variants.add(OLD_MANAGED_PREFIX + name)
+    return variants
+
+
+def bindpad_action_cleanup_variants(names: set[str]) -> set[str]:
+    return {bindpad_action(name) for name in bindpad_name_cleanup_variants(names)}
+
+
+def bindpad_character_tabs(profile: dict[Any, Any]) -> list[dict[Any, Any]]:
+    tabs: list[dict[Any, Any]] = []
+    for key, value in profile.items():
+        if isinstance(key, str) and key.startswith("CharacterSpecificTab") and isinstance(value, dict):
+            tabs.append(value)
+    return tabs
+
+
 def replace_bindpad_slots(
     table: dict[Any, Any],
     new_slots: list[dict[Any, Any]],
     cleanup_names: set[str],
 ) -> set[str]:
-    planned_actions = {bindpad_action(name) for name in cleanup_names}
+    cleanup_name_variants = bindpad_name_cleanup_variants(cleanup_names)
+    planned_actions = bindpad_action_cleanup_variants(cleanup_names)
     removed_actions: set[str] = set(planned_actions)
     existing: list[Any] = []
     for slot in bindpad_numeric_slots(table):
@@ -1580,7 +1622,7 @@ def replace_bindpad_slots(
             isinstance(slot, dict)
             and (
                 slot.get("source") == MANAGED_SOURCE
-                or slot.get("name") in cleanup_names
+                or slot.get("name") in cleanup_name_variants
                 or slot.get("action") in planned_actions
             )
         ):
@@ -1726,7 +1768,12 @@ def update_bindpad(
         raise ValueError("A class/spec section is required for BindPad character-specific binds.")
 
     _profile, tab, _profile_num = ensure_bindpad_profile(vars_table, profile_key, spec_index)
-    managed_actions = replace_bindpad_slots(tab, new_slots, names_to_remove)
+    managed_actions: set[str] = set()
+    for candidate_tab in bindpad_character_tabs(_profile):
+        if candidate_tab is tab:
+            continue
+        managed_actions.update(replace_bindpad_slots(candidate_tab, [], names_to_remove))
+    managed_actions.update(replace_bindpad_slots(tab, new_slots, names_to_remove))
     all_keys = _profile.setdefault("AllKeyBindings", {})
     if not isinstance(all_keys, dict):
         all_keys = {}
