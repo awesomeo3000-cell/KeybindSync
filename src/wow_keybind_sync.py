@@ -977,23 +977,39 @@ def collect_ggl_reserved_keys(
     return out
 
 
-def rewrite_ggl_lines(lines: list[str], plans: list[PlannedBind], overwrite: bool) -> list[str]:
+def set_ggl_line_value(line: str, value: str) -> str:
+    eq = line.find("=")
+    if eq == -1:
+        return line
+    semi = line.find(";", eq + 1)
+    if semi == -1:
+        return line[: eq + 1] + value
+    return line[: eq + 1] + value + line[semi:]
+
+
+def rewrite_ggl_lines(
+    lines: list[str],
+    plans: list[PlannedBind],
+    overwrite: bool,
+    cleanup_entries: list[GglEntry] | None = None,
+) -> list[str]:
     updated = list(lines)
+    planned_line_indices = {plan.action.line_index for plan in plans}
+
+    if overwrite and cleanup_entries:
+        for entry in cleanup_entries:
+            if entry.line_index not in planned_line_indices:
+                updated[entry.line_index] = set_ggl_line_value(updated[entry.line_index], "")
+
     for plan in plans:
         if not plan.ggl_token:
+            if overwrite:
+                updated[plan.action.line_index] = set_ggl_line_value(updated[plan.action.line_index], "")
             continue
         entry = plan.action
         if entry.value and not overwrite and plan.source == "current":
             continue
-        line = updated[entry.line_index]
-        eq = line.find("=")
-        if eq == -1:
-            continue
-        semi = line.find(";", eq + 1)
-        if semi == -1:
-            updated[entry.line_index] = line[: eq + 1] + plan.ggl_token
-        else:
-            updated[entry.line_index] = line[: eq + 1] + plan.ggl_token + line[semi:]
+        updated[entry.line_index] = set_ggl_line_value(updated[entry.line_index], plan.ggl_token)
     return updated
 
 

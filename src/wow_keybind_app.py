@@ -779,7 +779,10 @@ def run_once(
             )
             sync.write_text(addon_path, "DebounceVars = " + sync.dump_lua(vars_table) + "\n", addon_encoding)
 
-        new_lines = sync.rewrite_ggl_lines(ggl_lines, plans, overwrite_ggl)
+        cleanup_entries = [
+            entry for entry in sections.get(section, []) if entry.name in cleanup_names
+        ]
+        new_lines = sync.rewrite_ggl_lines(ggl_lines, plans, overwrite_ggl, cleanup_entries)
         sync.write_text(ggl_config, ggl_newline.join(new_lines) + ggl_newline, ggl_encoding)
 
         lines.append("  Applied.")
@@ -4495,10 +4498,6 @@ class App(ctk.CTk):
             scan = sync.scan_from_id(scan_id)
             var.set(scan is not None and scan in default_keys and layout.supports_scan(scan))
         self.refresh_key_rule_labels()
-        section = self.section.get().strip()
-        if section:
-            self.disabled_actions_by_section[section] = set()
-        self.disabled_actions_by_section["General"] = set()
 
     def run_express_preflight_check(self) -> None:
         snapshot = self.express_state_snapshot()
