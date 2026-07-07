@@ -825,6 +825,7 @@ class App(ctk.CTk):
         saved_layout = sync.key_layout_from_id(str(self.settings.get("keyboard_layout", sync.DEFAULT_KEY_LAYOUT_ID)))
         self.keyboard_layout_display = tk.StringVar(value=saved_layout.name)
         self.global_binds = tk.BooleanVar(value=bool(self.settings.get("global_binds", True)))
+        self.bind_all_sections = tk.BooleanVar(value=bool(self.settings.get("bind_all_sections", False)))
         self.overwrite_ggl = tk.BooleanVar(value=bool(self.settings.get("overwrite_ggl", False)))
         self.randomize = tk.BooleanVar(value=bool(self.settings.get("randomize", False)))
         self.random_seed = tk.StringVar(value=str(self.settings.get("random_seed") or sync.new_random_seed()))
@@ -1456,6 +1457,13 @@ class App(ctk.CTk):
 
         option_row = ctk.CTkFrame(card, fg_color="transparent")
         option_row.grid(row=5, column=0, columnspan=3, sticky="ew", padx=14, pady=(2, 0))
+        ctk.CTkCheckBox(
+            option_row,
+            text="Bind all class/spec sections",
+            variable=self.bind_all_sections,
+            text_color=ctk_theme("text"),
+            command=self.save_current_settings,
+        ).pack(anchor="w", pady=(0, 6))
         ctk.CTkCheckBox(
             option_row,
             text="Global targeting / trinkets / potions",
@@ -3054,8 +3062,13 @@ class App(ctk.CTk):
         ggl_config = Path(self.ggl_config.get().strip())
         seed_config = Path(self.seed_config.get().strip()) if self.seed_config.get().strip() else None
         layout = self.current_layout()
+        bind_all = self.bind_all_sections.get()
 
-        if section:
+        if bind_all:
+            self.add_preflight_item(items, "Class/spec", "OK", "All playable class/spec sections.")
+            if macro_addon == "BindPad":
+                self.add_preflight_item(items, "Bind all sections", "FAIL", "All-class binding is Debounce-only for now.", True)
+        elif section:
             self.add_preflight_item(items, "Class/spec", "OK", section)
             if macro_addon == "Debounce":
                 try:
@@ -3097,9 +3110,9 @@ class App(ctk.CTk):
                     profile_count = len(sync.bindpad_profile_keys(vars_table))
                     self.add_preflight_item(items, "Addon file", "OK", f"BindPad file found with {profile_count} profile(s).")
                     bindpad_profile = self.active_bindpad_profile_key()
-                    if section != "General" and not bindpad_profile:
+                    if (bind_all or section != "General") and not bindpad_profile:
                         self.add_preflight_item(items, "BindPad profile", "FAIL", "Choose a BindPad character/profile.", True)
-                    elif section != "General":
+                    elif bind_all or section != "General":
                         self.add_preflight_item(items, "BindPad profile", "OK", self.bindpad_profile.get().strip() or bindpad_profile or "Selected")
             except Exception as exc:
                 self.add_preflight_item(items, "Addon file", "FAIL", str(exc), True)
@@ -3116,7 +3129,21 @@ class App(ctk.CTk):
                     raise RuntimeError("Config.ini did not contain any sections.")
                 config_ok = True
                 self.add_preflight_item(items, "Config.ini", "OK", f"{len(sections)} section(s) found.")
-                if section and section not in sections:
+                if bind_all:
+                    playable = [
+                        candidate for candidate in self.express_playable_sections(section_order(sections))
+                    ]
+                    if macro_addon == "Debounce":
+                        playable = [
+                            candidate
+                            for candidate in playable
+                            if sync.retail_debounce_target_from_section(candidate)
+                        ]
+                    if playable:
+                        self.add_preflight_item(items, "Selected sections", "OK", f"{len(playable)} class/spec section(s) will be processed.")
+                    else:
+                        self.add_preflight_item(items, "Selected sections", "FAIL", "No supported class/spec sections found in Config.ini.", True)
+                elif section and section not in sections:
                     self.add_preflight_item(items, "Selected section", "FAIL", f"{section} is not in Config.ini.", True)
                 elif section:
                     self.add_preflight_item(items, "Selected section", "OK", "Found in Config.ini.")
@@ -3160,23 +3187,51 @@ class App(ctk.CTk):
             candidates = []
             self.add_preflight_item(items, "Reserved binds", "FAIL", str(exc), True)
 
-        if config_ok and section:
-            active_actions = self.active_preflight_actions(sections, section)
+        if config_ok and (section or bind_all):
+            if bind_all:
+                active_actions: dict[str, set[str]] = {}
+                for run_section in self.playable_sections_for_current_config(macro_addon):
+                    names = {entry.name for entry in sections.get(run_section, [])}
+                    selected = names - self.disabled_actions_by_section.get(run_section, set())
+                    if selected:
+                        active_actions[run_section] = selected
+                if self.global_binds.get():
+                    names = {entry.name for entry in sections.get("General", [])}
+                    selected = (names & set(GLOBAL_ACTIONS)) - self.disabled_actions_by_section.get("General", set())
+                    if selected:
+                        active_actions["General"] = selected
+            else:
+                active_actions = self.active_preflight_actions(sections, section)
             required = sum(len(names) for names in active_actions.values())
+            largest_section_required = max((len(names) for names in active_actions.values()), default=0)
             if required == 0:
                 self.add_preflight_item(items, "Actions to bind", "WARN", "No active actions selected for this run.")
-            elif candidates and len(candidates) < required:
+            elif candidates and len(candidates) < largest_section_required:
                 self.add_preflight_item(
                     items,
                     "Actions to bind",
                     "FAIL",
-                    f"{required} action(s) need binds, but only {len(candidates)} usable key combination(s) are available.",
+                    f"Largest section needs {largest_section_required} bind(s), but only {len(candidates)} usable key combination(s) are available.",
                     True,
+                )
+            elif bind_all:
+                self.add_preflight_item(
+                    items,
+                    "Actions to bind",
+                    "OK",
+                    f"{required} active action(s) across {len(active_actions)} section(s); largest section has {largest_section_required}.",
                 )
             else:
                 self.add_preflight_item(items, "Actions to bind", "OK", f"{required} active action(s).")
 
-            duplicates = self.duplicate_loader_hotkeys(sections, active_actions, layout)
+            if bind_all:
+                duplicates = []
+                for active_section, action_names in active_actions.items():
+                    duplicates.extend(
+                        self.duplicate_loader_hotkeys(sections, {active_section: action_names}, layout)
+                    )
+            else:
+                duplicates = self.duplicate_loader_hotkeys(sections, active_actions, layout)
             if duplicates:
                 detail = "; ".join(duplicates[:3])
                 if len(duplicates) > 3:
@@ -3185,8 +3240,10 @@ class App(ctk.CTk):
             else:
                 self.add_preflight_item(items, "Duplicate loader hotkeys", "OK", "No duplicate hotkeys in the active selection.")
 
-            duplicate_macro_names = self.duplicate_addon_macro_names(active_actions)
-            if duplicate_macro_names:
+            duplicate_macro_names = [] if bind_all else self.duplicate_addon_macro_names(active_actions)
+            if bind_all:
+                self.add_preflight_item(items, "Duplicate addon macro names", "OK", "Skipped across multiple sections; addon tabs are isolated by section.")
+            elif duplicate_macro_names:
                 detail = "; ".join(duplicate_macro_names[:3])
                 if len(duplicate_macro_names) > 3:
                     detail += f"; +{len(duplicate_macro_names) - 3} more"
@@ -3194,7 +3251,19 @@ class App(ctk.CTk):
             else:
                 self.add_preflight_item(items, "Duplicate addon macro names", "OK", "No duplicate macro names in the active selection.")
 
-            custom_count, custom_errors = self.custom_macro_preflight_errors(sections, section)
+            if bind_all:
+                custom_count = 0
+                custom_errors = []
+                seen_custom_errors: set[str] = set()
+                for run_section in self.playable_sections_for_current_config(macro_addon):
+                    count, errors = self.custom_macro_preflight_errors(sections, run_section)
+                    custom_count += count
+                    for error in errors:
+                        if error not in seen_custom_errors:
+                            custom_errors.append(error)
+                            seen_custom_errors.add(error)
+            else:
+                custom_count, custom_errors = self.custom_macro_preflight_errors(sections, section)
             if custom_errors:
                 detail = "; ".join(custom_errors[:4])
                 if len(custom_errors) > 4:
@@ -3580,6 +3649,7 @@ class App(ctk.CTk):
             f"App version: {APP_VERSION}",
             f"Addon target: {self.macro_addon.get()}",
             f"Class/spec: {self.section.get().strip() or '(none selected)'}",
+            f"Bind all class/spec sections: {'on' if self.bind_all_sections.get() else 'off'}",
             f"Keyboard layout: {self.current_layout().name}",
             f"Global binds: {'on' if self.global_binds.get() else 'off'}",
             f"Replace loader hotkeys: {'on' if self.overwrite_ggl.get() else 'off'}",
@@ -3907,6 +3977,25 @@ class App(ctk.CTk):
         if allowed_names is not None:
             names &= allowed_names
         return names - self.disabled_actions_by_section.get(section, set())
+
+    def playable_sections_for_current_config(self, macro_addon: str | None = None) -> list[str]:
+        addon = macro_addon or ("BindPad" if self.macro_addon.get() == "BindPad" else "Debounce")
+        sections = self.express_playable_sections(self.available_sections)
+        if not sections:
+            config_raw = self.ggl_config.get().strip()
+            if not config_raw:
+                return []
+            sections = self.express_playable_sections(load_sections(Path(config_raw)))
+        if addon == "Debounce":
+            supported = []
+            for section in sections:
+                try:
+                    sync.section_to_debounce_target(section)
+                except (RuntimeError, ValueError, SystemExit):
+                    continue
+                supported.append(section)
+            return supported
+        return sections
 
     def refresh_custom_controls(self) -> None:
         if not hasattr(self, "custom_loader_combo"):
@@ -4350,6 +4439,7 @@ class App(ctk.CTk):
             "seed_config": self.seed_config.get(),
             "bindpad_profile": self.active_bindpad_profile_key() or self.bindpad_profile.get(),
             "global_binds": self.global_binds.get(),
+            "bind_all_sections": self.bind_all_sections.get(),
             "overwrite_ggl": self.overwrite_ggl.get(),
             "randomize": self.randomize.get(),
             "random_seed": self.random_seed.get().strip(),
@@ -4545,12 +4635,15 @@ class App(ctk.CTk):
                 messagebox.showerror("Preflight Check", "Fix the blocking preflight issues before continuing.")
                 return
 
+            bind_all = self.bind_all_sections.get()
             section = self.section.get().strip()
-            if not section:
+            if not section and not bind_all:
                 raise RuntimeError("Choose a class/spec first.")
 
             addon_path = Path(self.debounce_path.get())
             macro_addon = "BindPad" if self.macro_addon.get() == "BindPad" else "Debounce"
+            if bind_all and macro_addon == "BindPad":
+                raise RuntimeError("Bind all class/spec sections is Debounce-only for now.")
             bindpad_profile = self.active_bindpad_profile_key()
             ggl_config = Path(self.ggl_config.get())
             seed_config = Path(self.seed_config.get()) if self.seed_config.get().strip() else None
@@ -4582,7 +4675,7 @@ class App(ctk.CTk):
                     raise RuntimeError("Choose a valid BindPad.lua SavedVariables file.") from exc
                 self.refresh_bindpad_profiles()
                 bindpad_profile = self.active_bindpad_profile_key()
-                if section != "General" and not bindpad_profile:
+                if (bind_all or section != "General") and not bindpad_profile:
                     raise RuntimeError("Choose a BindPad profile for class/spec binds.")
             if not ggl_config.exists():
                 raise RuntimeError("Choose a valid Config.ini path.")
@@ -4601,89 +4694,153 @@ class App(ctk.CTk):
             self.save_current_settings()
 
             results = []
-            keys_from_prior_passes: set[sync.KeyBind] = set()
-            loader_context_sections = {"General", section} if section != "General" else {"General"}
-            if section != "General":
-                spec_cleanup_names = set(load_action_names(ggl_config, section))
-                spec_action_names = self.selected_action_names_for_section(section)
-                result, plans = run_once(
-                    section=section,
-                    action_names=spec_action_names,
-                    addon_path=addon_path,
-                    macro_addon=macro_addon,
-                    bindpad_profile=bindpad_profile,
-                    ggl_config=ggl_config,
-                    seed_config=seed_config,
-                    apply=apply,
-                    overwrite_ggl=self.overwrite_ggl.get(),
-                    reports_dir=reports_dir,
-                    layout=layout,
-                    enabled_scans=enabled_scans,
-                    random_seed=random_seed,
-                    enabled_mods=enabled_mods,
-                    allow_unmodified=allow_unmodified,
-                    blocked_keys=blocked_keys,
-                    macro_overrides=self.custom_overrides_for_section(section),
-                    loader_context_sections=loader_context_sections,
-                    cleanup_names=spec_cleanup_names,
-                )
-                results.append(result)
-                keys_from_prior_passes.update(plan.key for plan in plans if plan.key)
+            if bind_all:
+                keys_from_general: set[sync.KeyBind] = set()
+                run_sections = self.playable_sections_for_current_config(macro_addon)
+                if not run_sections:
+                    raise RuntimeError("No supported class/spec sections found in Config.ini.")
 
-            if self.global_binds.get():
-                general_cleanup_names = set(GLOBAL_ACTIONS)
-                general_action_names = self.selected_action_names_for_section(
-                    "General",
-                    set(GLOBAL_ACTIONS),
-                )
-                result, plans = run_once(
-                    section="General",
-                    action_names=general_action_names,
-                    addon_path=addon_path,
-                    macro_addon=macro_addon,
-                    bindpad_profile=bindpad_profile,
-                    ggl_config=ggl_config,
-                    seed_config=seed_config,
-                    apply=apply,
-                    overwrite_ggl=self.overwrite_ggl.get(),
-                    reports_dir=reports_dir,
-                    layout=layout,
-                    enabled_scans=enabled_scans,
-                    random_seed=random_seed,
-                    enabled_mods=enabled_mods,
-                    allow_unmodified=allow_unmodified,
-                    blocked_keys=blocked_keys,
-                    extra_blocked_keys=keys_from_prior_passes,
-                    macro_overrides=self.custom_overrides_for_section("General"),
-                    loader_context_sections=loader_context_sections,
-                    cleanup_names=general_cleanup_names,
-                )
-                results.append(result)
-            elif section == "General":
-                general_cleanup_names = set(load_action_names(ggl_config, "General"))
-                general_action_names = self.selected_action_names_for_section("General")
-                result, plans = run_once(
-                    section="General",
-                    action_names=general_action_names,
-                    addon_path=addon_path,
-                    macro_addon=macro_addon,
-                    bindpad_profile=bindpad_profile,
-                    ggl_config=ggl_config,
-                    seed_config=seed_config,
-                    apply=apply,
-                    overwrite_ggl=self.overwrite_ggl.get(),
-                    reports_dir=reports_dir,
-                    layout=layout,
-                    enabled_scans=enabled_scans,
-                    random_seed=random_seed,
-                    enabled_mods=enabled_mods,
-                    allow_unmodified=allow_unmodified,
-                    blocked_keys=blocked_keys,
-                    macro_overrides=self.custom_overrides_for_section("General"),
-                    loader_context_sections=loader_context_sections,
-                    cleanup_names=general_cleanup_names,
-                )
-                results.append(result)
+                if self.global_binds.get():
+                    general_cleanup_names = set(GLOBAL_ACTIONS)
+                    general_action_names = self.selected_action_names_for_section(
+                        "General",
+                        set(GLOBAL_ACTIONS),
+                    )
+                    result, plans = run_once(
+                        section="General",
+                        action_names=general_action_names,
+                        addon_path=addon_path,
+                        macro_addon=macro_addon,
+                        bindpad_profile=bindpad_profile,
+                        ggl_config=ggl_config,
+                        seed_config=seed_config,
+                        apply=apply,
+                        overwrite_ggl=self.overwrite_ggl.get(),
+                        reports_dir=reports_dir,
+                        layout=layout,
+                        enabled_scans=enabled_scans,
+                        random_seed=random_seed,
+                        enabled_mods=enabled_mods,
+                        allow_unmodified=allow_unmodified,
+                        blocked_keys=blocked_keys,
+                        macro_overrides=self.custom_overrides_for_section("General"),
+                        loader_context_sections={"General"},
+                        cleanup_names=general_cleanup_names,
+                    )
+                    results.append(result)
+                    keys_from_general.update(plan.key for plan in plans if plan.key)
+
+                for run_section in run_sections:
+                    loader_context_sections = {"General", run_section}
+                    spec_cleanup_names = set(load_action_names(ggl_config, run_section))
+                    spec_action_names = self.selected_action_names_for_section(run_section)
+                    result, plans = run_once(
+                        section=run_section,
+                        action_names=spec_action_names,
+                        addon_path=addon_path,
+                        macro_addon=macro_addon,
+                        bindpad_profile=bindpad_profile,
+                        ggl_config=ggl_config,
+                        seed_config=seed_config,
+                        apply=apply,
+                        overwrite_ggl=self.overwrite_ggl.get(),
+                        reports_dir=reports_dir,
+                        layout=layout,
+                        enabled_scans=enabled_scans,
+                        random_seed=random_seed,
+                        enabled_mods=enabled_mods,
+                        allow_unmodified=allow_unmodified,
+                        blocked_keys=blocked_keys,
+                        extra_blocked_keys=keys_from_general,
+                        macro_overrides=self.custom_overrides_for_section(run_section),
+                        loader_context_sections=loader_context_sections,
+                        cleanup_names=spec_cleanup_names,
+                    )
+                    results.append(result)
+            else:
+                keys_from_prior_passes: set[sync.KeyBind] = set()
+                loader_context_sections = {"General", section} if section != "General" else {"General"}
+                if section != "General":
+                    spec_cleanup_names = set(load_action_names(ggl_config, section))
+                    spec_action_names = self.selected_action_names_for_section(section)
+                    result, plans = run_once(
+                        section=section,
+                        action_names=spec_action_names,
+                        addon_path=addon_path,
+                        macro_addon=macro_addon,
+                        bindpad_profile=bindpad_profile,
+                        ggl_config=ggl_config,
+                        seed_config=seed_config,
+                        apply=apply,
+                        overwrite_ggl=self.overwrite_ggl.get(),
+                        reports_dir=reports_dir,
+                        layout=layout,
+                        enabled_scans=enabled_scans,
+                        random_seed=random_seed,
+                        enabled_mods=enabled_mods,
+                        allow_unmodified=allow_unmodified,
+                        blocked_keys=blocked_keys,
+                        macro_overrides=self.custom_overrides_for_section(section),
+                        loader_context_sections=loader_context_sections,
+                        cleanup_names=spec_cleanup_names,
+                    )
+                    results.append(result)
+                    keys_from_prior_passes.update(plan.key for plan in plans if plan.key)
+
+                if self.global_binds.get():
+                    general_cleanup_names = set(GLOBAL_ACTIONS)
+                    general_action_names = self.selected_action_names_for_section(
+                        "General",
+                        set(GLOBAL_ACTIONS),
+                    )
+                    result, plans = run_once(
+                        section="General",
+                        action_names=general_action_names,
+                        addon_path=addon_path,
+                        macro_addon=macro_addon,
+                        bindpad_profile=bindpad_profile,
+                        ggl_config=ggl_config,
+                        seed_config=seed_config,
+                        apply=apply,
+                        overwrite_ggl=self.overwrite_ggl.get(),
+                        reports_dir=reports_dir,
+                        layout=layout,
+                        enabled_scans=enabled_scans,
+                        random_seed=random_seed,
+                        enabled_mods=enabled_mods,
+                        allow_unmodified=allow_unmodified,
+                        blocked_keys=blocked_keys,
+                        extra_blocked_keys=keys_from_prior_passes,
+                        macro_overrides=self.custom_overrides_for_section("General"),
+                        loader_context_sections=loader_context_sections,
+                        cleanup_names=general_cleanup_names,
+                    )
+                    results.append(result)
+                elif section == "General":
+                    general_cleanup_names = set(load_action_names(ggl_config, "General"))
+                    general_action_names = self.selected_action_names_for_section("General")
+                    result, plans = run_once(
+                        section="General",
+                        action_names=general_action_names,
+                        addon_path=addon_path,
+                        macro_addon=macro_addon,
+                        bindpad_profile=bindpad_profile,
+                        ggl_config=ggl_config,
+                        seed_config=seed_config,
+                        apply=apply,
+                        overwrite_ggl=self.overwrite_ggl.get(),
+                        reports_dir=reports_dir,
+                        layout=layout,
+                        enabled_scans=enabled_scans,
+                        random_seed=random_seed,
+                        enabled_mods=enabled_mods,
+                        allow_unmodified=allow_unmodified,
+                        blocked_keys=blocked_keys,
+                        macro_overrides=self.custom_overrides_for_section("General"),
+                        loader_context_sections=loader_context_sections,
+                        cleanup_names=general_cleanup_names,
+                    )
+                    results.append(result)
 
             prefix = "Applied" if apply else "Preview"
             self.write_log(preflight_text + "\n\n" + prefix + " complete.\n\n" + "\n\n".join(results))
