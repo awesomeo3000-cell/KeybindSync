@@ -21,7 +21,7 @@ import customtkinter as ctk
 import wow_keybind_sync as sync
 
 
-APP_VERSION = "1.2.6-dev.2"
+APP_VERSION = "1.3.0"
 
 
 GLOBAL_ACTIONS = [
@@ -825,7 +825,8 @@ class App(ctk.CTk):
         saved_layout = sync.key_layout_from_id(str(self.settings.get("keyboard_layout", sync.DEFAULT_KEY_LAYOUT_ID)))
         self.keyboard_layout_display = tk.StringVar(value=saved_layout.name)
         self.global_binds = tk.BooleanVar(value=bool(self.settings.get("global_binds", True)))
-        self.bind_all_sections = tk.BooleanVar(value=bool(self.settings.get("bind_all_sections", False)))
+        self.multi_section_binds = tk.BooleanVar(value=bool(self.settings.get("multi_section_binds", False)))
+        self.advanced_run_mode = tk.StringVar(value="Batch Specs" if self.multi_section_binds.get() else "Single Spec")
         self.overwrite_ggl = tk.BooleanVar(value=bool(self.settings.get("overwrite_ggl", False)))
         self.randomize = tk.BooleanVar(value=bool(self.settings.get("randomize", False)))
         self.random_seed = tk.StringVar(value=str(self.settings.get("random_seed") or sync.new_random_seed()))
@@ -881,6 +882,7 @@ class App(ctk.CTk):
                     )
         self.action_visible_names: list[str] = []
         self.custom_visible_indices: list[int] = []
+        self.multi_section_vars: dict[str, tk.BooleanVar] = {}
         self.section_combos: list[tk.Widget] = []
         self.bindpad_profile_combos: list[tk.Widget] = []
         self.available_sections: list[str] = []
@@ -889,6 +891,13 @@ class App(ctk.CTk):
         self.advanced_section_visible_sections: list[str] = []
         self.advanced_section_filter = tk.StringVar()
         self.advanced_section_display = tk.StringVar(value="No class/spec selected")
+        saved_multi_sections = self.settings.get("selected_bind_sections")
+        self.selected_bind_sections: set[str] = {
+            str(section)
+            for section in saved_multi_sections
+            if str(section)
+        } if isinstance(saved_multi_sections, list) else set()
+        self.multi_section_visible_sections: list[str] = []
         self.express_sections: list[str] = []
         self.express_section_visible_sections: list[str] = []
         self.express_section_filter = tk.StringVar()
@@ -1050,9 +1059,18 @@ class App(ctk.CTk):
         for name in (
             "macro_addon_combo",
             "bindpad_profile_combo",
+            "advanced_run_segment",
+            "single_target_frame",
+            "batch_target_frame",
             "advanced_section_search",
             "advanced_section_list_frame",
             "advanced_section_list",
+            "multi_section_search",
+            "multi_section_scroll",
+            "action_help_label",
+            "batch_actions_notice",
+            "action_body_frame",
+            "action_button_row",
             "action_list",
             "custom_loader_combo",
             "custom_macro_text",
@@ -1079,6 +1097,45 @@ class App(ctk.CTk):
             return
         self.notebook.set(tab_name)
         self.build_tab_if_needed(tab_name)
+
+    def set_advanced_run_mode(self, value: str | None = None) -> None:
+        mode = value or self.advanced_run_mode.get()
+        self.multi_section_binds.set(mode == "Batch Specs")
+        self.save_current_settings()
+        self.refresh_advanced_mode_visibility()
+
+    def refresh_advanced_mode_visibility(self) -> None:
+        batch_mode = self.multi_section_binds.get()
+        desired_mode = "Batch Specs" if batch_mode else "Single Spec"
+        if hasattr(self, "advanced_run_mode") and self.advanced_run_mode.get() != desired_mode:
+            self.advanced_run_mode.set(desired_mode)
+
+        if hasattr(self, "single_target_frame") and hasattr(self, "batch_target_frame"):
+            if batch_mode:
+                self.single_target_frame.grid_remove()
+                self.batch_target_frame.grid()
+            else:
+                self.batch_target_frame.grid_remove()
+                self.single_target_frame.grid()
+
+        if hasattr(self, "action_help_label"):
+            self.action_help_label.configure(
+                text=(
+                    "Batch Specs mode is active. Spell/action choices are edited per spec in Single Spec mode."
+                    if batch_mode
+                    else "Turn off actions you do not want this spec to bind. Double-click an action, select several, or use Disable All to start from a blank slate."
+                )
+            )
+
+        if hasattr(self, "action_body_frame") and hasattr(self, "action_button_row") and hasattr(self, "batch_actions_notice"):
+            if batch_mode:
+                self.action_body_frame.grid_remove()
+                self.action_button_row.grid_remove()
+                self.batch_actions_notice.grid()
+            else:
+                self.batch_actions_notice.grid_remove()
+                self.action_body_frame.grid()
+                self.action_button_row.grid()
 
     def build_tab_if_needed(self, tab_name: str) -> None:
         if tab_name in getattr(self, "built_tabs", set()):
@@ -1206,6 +1263,7 @@ class App(ctk.CTk):
             self._configure_classic_textlike(self._widget_exists(name))
 
         self._recolor_listbox_rows()
+        self.refresh_multi_section_list()
 
     def toggle_dark_mode(self) -> None:
         dark_mode = self.dark_mode.get()
@@ -1363,15 +1421,38 @@ class App(ctk.CTk):
         )
 
     def _build_advanced_target_card(self, card: ctk.CTkFrame) -> None:
-        ctk.CTkLabel(card, text="Selected", text_color=ctk_theme("text"), anchor="w").grid(
+        card.columnconfigure(1, weight=1)
+
+        mode_row = ctk.CTkFrame(card, fg_color="transparent")
+        mode_row.grid(row=1, column=0, columnspan=2, sticky="ew", padx=14, pady=(0, 8))
+        ctk.CTkLabel(mode_row, text="Run mode", text_color=ctk_theme("text"), anchor="w").pack(side="left", padx=(0, 10))
+        self.advanced_run_segment = ctk.CTkSegmentedButton(
+            mode_row,
+            values=["Single Spec", "Batch Specs"],
+            variable=self.advanced_run_mode,
+            command=self.set_advanced_run_mode,
+        )
+        self.advanced_run_segment.pack(side="left", fill="x", expand=True)
+        ctk.CTkButton(card, text="Reload", width=86, height=32, corner_radius=8, command=self.reload_sections).grid(
             row=1,
+            column=2,
+            sticky="e",
+            padx=(0, 14),
+            pady=(0, 8),
+        )
+
+        self.single_target_frame = ctk.CTkFrame(card, fg_color="transparent")
+        self.single_target_frame.grid(row=2, column=0, columnspan=3, sticky="nsew")
+        self.single_target_frame.columnconfigure(1, weight=1)
+        ctk.CTkLabel(self.single_target_frame, text="Selected", text_color=ctk_theme("text"), anchor="w").grid(
+            row=0,
             column=0,
             sticky="w",
             padx=(14, 8),
             pady=4,
         )
         ctk.CTkLabel(
-            card,
+            self.single_target_frame,
             textvariable=self.advanced_section_display,
             text_color=ctk_theme("text"),
             fg_color=ctk_theme("chip_bg"),
@@ -1379,39 +1460,29 @@ class App(ctk.CTk):
             padx=10,
             pady=5,
             anchor="w",
-        ).grid(row=1, column=1, sticky="ew", padx=(0, 10), pady=4)
-        ctk.CTkButton(card, text="Reload", width=86, height=32, corner_radius=8, command=self.reload_sections).grid(
+        ).grid(row=0, column=1, sticky="ew", padx=(0, 14), pady=4)
+        ctk.CTkLabel(self.single_target_frame, text="Search", text_color=ctk_theme("text"), anchor="w").grid(
             row=1,
-            column=2,
-            sticky="e",
-            padx=(0, 14),
-            pady=4,
-        )
-        card.columnconfigure(1, weight=1)
-
-        ctk.CTkLabel(card, text="Search", text_color=ctk_theme("text"), anchor="w").grid(
-            row=2,
             column=0,
             sticky="w",
             padx=(14, 8),
             pady=4,
         )
         self.advanced_section_search = ctk.CTkEntry(
-            card,
+            self.single_target_frame,
             textvariable=self.advanced_section_filter,
             placeholder_text="Type class or spec",
             height=32,
         )
-        self.advanced_section_search.grid(row=2, column=1, columnspan=2, sticky="ew", padx=(0, 14), pady=4)
-
+        self.advanced_section_search.grid(row=1, column=1, sticky="ew", padx=(0, 14), pady=4)
         self.advanced_section_list_frame = ctk.CTkFrame(
-            card,
+            self.single_target_frame,
             fg_color=ctk_theme("field"),
             border_color=ctk_theme("gold_dark"),
             border_width=1,
             corner_radius=8,
         )
-        self.advanced_section_list_frame.grid(row=3, column=0, columnspan=3, sticky="nsew", padx=14, pady=(4, 8))
+        self.advanced_section_list_frame.grid(row=2, column=0, columnspan=2, sticky="nsew", padx=14, pady=(4, 8))
         self.advanced_section_list = tk.Listbox(
             self.advanced_section_list_frame,
             height=6,
@@ -1436,6 +1507,7 @@ class App(ctk.CTk):
         advanced_section_scrollbar.grid(row=0, column=1, sticky="ns", padx=(2, 8), pady=8)
         self.advanced_section_list_frame.columnconfigure(0, weight=1)
         self.advanced_section_list_frame.rowconfigure(0, weight=1)
+        self.single_target_frame.rowconfigure(2, weight=1)
         self.advanced_section_list.bind("<<ListboxSelect>>", self.on_advanced_section_list_select)
         self.advanced_section_list.bind("<Double-Button-1>", self.on_advanced_section_list_activate)
         self.advanced_section_list.bind("<Return>", self.on_advanced_section_list_activate)
@@ -1445,25 +1517,91 @@ class App(ctk.CTk):
         self.page_scroll_exempt_widgets.update({self.advanced_section_list, advanced_section_scrollbar})
         self.page_scroll_frame.add_nested_scroll_root(self.advanced_section_list)
         self.page_scroll_frame.add_nested_scroll_root(advanced_section_scrollbar)
-        card.rowconfigure(3, weight=1)
-
         self._ctk_hint(
-            card,
-            "Type to filter. Advanced includes every Config.ini section.",
-            4,
-            columnspan=3,
+            self.single_target_frame,
+            "Single Spec mode edits and runs one selected class/spec. Use it to tune spell/action toggles for a spec before batch runs.",
+            3,
+            columnspan=2,
             wraplength=360,
         )
 
-        option_row = ctk.CTkFrame(card, fg_color="transparent")
-        option_row.grid(row=5, column=0, columnspan=3, sticky="ew", padx=14, pady=(2, 0))
-        ctk.CTkCheckBox(
-            option_row,
-            text="Bind all class/spec sections",
-            variable=self.bind_all_sections,
+        self.batch_target_frame = ctk.CTkFrame(card, fg_color="transparent")
+        self.batch_target_frame.grid(row=2, column=0, columnspan=3, sticky="nsew")
+        self.batch_target_frame.columnconfigure(1, weight=1)
+        ctk.CTkLabel(self.batch_target_frame, text="Search", text_color=ctk_theme("text"), anchor="w").grid(
+            row=0,
+            column=0,
+            sticky="w",
+            padx=(14, 8),
+            pady=4,
+        )
+        self.multi_section_search = ctk.CTkEntry(
+            self.batch_target_frame,
+            textvariable=self.advanced_section_filter,
+            placeholder_text="Filter batch specs",
+            height=32,
+        )
+        self.multi_section_search.grid(row=0, column=1, sticky="ew", padx=(0, 14), pady=4)
+        multi_frame = ctk.CTkFrame(
+            self.batch_target_frame,
+            fg_color=ctk_theme("field"),
+            border_color=ctk_theme("gold_dark"),
+            border_width=1,
+            corner_radius=8,
+        )
+        multi_frame.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=14, pady=(4, 8))
+        multi_frame.columnconfigure(0, weight=1)
+        multi_frame.rowconfigure(1, weight=1)
+        self.batch_target_frame.rowconfigure(1, weight=1)
+        multi_header = ctk.CTkFrame(multi_frame, fg_color="transparent")
+        multi_header.grid(row=0, column=0, columnspan=2, sticky="ew", padx=8, pady=(8, 4))
+        ctk.CTkLabel(
+            multi_header,
+            text="Choose specs to include",
             text_color=ctk_theme("text"),
-            command=self.save_current_settings,
-        ).pack(anchor="w", pady=(0, 6))
+            font=("Segoe UI Semibold", 11),
+            anchor="w",
+        ).pack(side="left")
+        ctk.CTkButton(
+            multi_header,
+            text="Select Visible",
+            width=104,
+            height=28,
+            corner_radius=8,
+            fg_color=ctk_theme("secondary_button"),
+            hover_color=ctk_theme("secondary_button_hover"),
+            command=self.select_visible_multi_sections,
+        ).pack(side="right", padx=(8, 0))
+        ctk.CTkButton(
+            multi_header,
+            text="Clear",
+            width=64,
+            height=28,
+            corner_radius=8,
+            fg_color=ctk_theme("secondary_button"),
+            hover_color=ctk_theme("secondary_button_hover"),
+            command=self.clear_multi_sections,
+        ).pack(side="right")
+        self.multi_section_scroll = ctk.CTkScrollableFrame(
+            multi_frame,
+            height=168,
+            fg_color=ctk_theme("field"),
+            corner_radius=6,
+        )
+        self.multi_section_scroll.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=8, pady=(0, 8))
+        self.page_scroll_exempt_widgets.add(self.multi_section_scroll)
+        self.page_scroll_frame.add_nested_scroll_root(self.multi_section_scroll)
+        self._ctk_hint(
+            self.batch_target_frame,
+            "Batch Specs runs only checked specs. Spell/action toggles are saved per spec; switch to Single Spec and select a spec to edit its toggles.",
+            2,
+            columnspan=2,
+            wraplength=360,
+        )
+        card.rowconfigure(2, weight=1)
+
+        option_row = ctk.CTkFrame(card, fg_color="transparent")
+        option_row.grid(row=3, column=0, columnspan=3, sticky="ew", padx=14, pady=(2, 0))
         ctk.CTkCheckBox(
             option_row,
             text="Global targeting / trinkets / potions",
@@ -1487,7 +1625,7 @@ class App(ctk.CTk):
         ).pack(anchor="w")
 
         seed_row = ctk.CTkFrame(card, fg_color="transparent")
-        seed_row.grid(row=6, column=0, columnspan=3, sticky="ew", padx=14, pady=(12, 0))
+        seed_row.grid(row=4, column=0, columnspan=3, sticky="ew", padx=14, pady=(12, 0))
         ctk.CTkLabel(seed_row, text="Seed", text_color=ctk_theme("text")).pack(side="left", padx=(0, 8))
         ctk.CTkEntry(seed_row, textvariable=self.random_seed, width=150, height=32).pack(side="left")
         ctk.CTkButton(seed_row, text="New Seed", width=94, height=32, corner_radius=8, command=self.new_random_seed).pack(
@@ -1497,21 +1635,40 @@ class App(ctk.CTk):
         self._ctk_hint(
             card,
             "Use Replace when changing randomization, modifiers, keys, or reserved binds.",
-            7,
+            5,
             columnspan=3,
             wraplength=360,
         )
+        self.refresh_advanced_mode_visibility()
 
     def _build_advanced_actions_card(self, card: ctk.CTkFrame) -> None:
-        ctk.CTkLabel(
+        self.action_help_label = ctk.CTkLabel(
             card,
             text="Turn off actions you do not want this spec to bind. Double-click an action, select several, or use Disable All to start from a blank slate.",
             text_color=ctk_theme("muted"),
             anchor="w",
             wraplength=780,
-        ).grid(row=1, column=0, columnspan=4, sticky="ew", padx=14, pady=(0, 8))
+        )
+        self.action_help_label.grid(row=1, column=0, columnspan=4, sticky="ew", padx=14, pady=(0, 8))
 
-        body = ctk.CTkFrame(card, fg_color=ctk_theme("field"), border_color=ctk_theme("gold_dark"), border_width=1, corner_radius=8)
+        self.batch_actions_notice = ctk.CTkFrame(
+            card,
+            fg_color=ctk_theme("chip_bg"),
+            border_color=ctk_theme("gold_dark"),
+            border_width=1,
+            corner_radius=8,
+        )
+        self.batch_actions_notice.grid(row=2, column=0, columnspan=4, sticky="ew", padx=14, pady=(0, 14))
+        ctk.CTkLabel(
+            self.batch_actions_notice,
+            text="Batch Specs uses the saved spell/action choices for each checked spec. To edit a spec, switch to Single Spec, select that spec, adjust this list, then return to Batch Specs.",
+            text_color=ctk_theme("text"),
+            anchor="w",
+            justify="left",
+            wraplength=760,
+        ).pack(fill="x", padx=12, pady=12)
+
+        body = self.action_body_frame = ctk.CTkFrame(card, fg_color=ctk_theme("field"), border_color=ctk_theme("gold_dark"), border_width=1, corner_radius=8)
         body.grid(row=2, column=0, columnspan=4, sticky="nsew", padx=14, pady=(0, 10))
         self.action_list = tk.Listbox(
             body,
@@ -1541,7 +1698,7 @@ class App(ctk.CTk):
         self.action_list.bind("<KeyPress>", self._on_action_list_keypress)
         self.action_list.bind("<Double-Button-1>", lambda _event: self.toggle_selected_actions())
 
-        button_row = ctk.CTkFrame(card, fg_color="transparent")
+        button_row = self.action_button_row = ctk.CTkFrame(card, fg_color="transparent")
         button_row.grid(row=3, column=0, columnspan=4, sticky="ew", padx=14, pady=(0, 14))
         ctk.CTkButton(button_row, text="Toggle Selected", width=120, height=32, corner_radius=8, command=self.toggle_selected_actions).pack(side="left")
         ctk.CTkButton(
@@ -1586,6 +1743,7 @@ class App(ctk.CTk):
         ).pack(side="left", padx=(8, 0))
         card.columnconfigure(0, weight=1)
         card.rowconfigure(2, weight=1)
+        self.refresh_advanced_mode_visibility()
 
     def _build_advanced_custom_card(self, card: ctk.CTkFrame) -> None:
         ctk.CTkLabel(
@@ -2032,6 +2190,9 @@ class App(ctk.CTk):
         card.columnconfigure(0, weight=1)
         card.rowconfigure(1, weight=1)
         self.page_scroll_exempt_widgets.update({self.log, scrollbar})
+        self.log.bind("<MouseWheel>", self._on_text_mousewheel)
+        self.log.bind("<Button-4>", self._on_text_scroll_button)
+        self.log.bind("<Button-5>", self._on_text_scroll_button)
 
     def _build_express_tab(self, parent: tk.Widget) -> None:
         parent.configure(fg_color=ctk_theme("bg"))
@@ -2360,6 +2521,15 @@ class App(ctk.CTk):
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(1, weight=1)
         self.page_scroll_exempt_widgets.add(self.express_log)
+        self.express_log.bind("<MouseWheel>", self._on_text_mousewheel)
+        self.express_log.bind("<Button-4>", self._on_text_scroll_button)
+        self.express_log.bind("<Button-5>", self._on_text_scroll_button)
+        inner_textbox = getattr(self.express_log, "_textbox", None)
+        if inner_textbox is not None:
+            self.page_scroll_exempt_widgets.add(inner_textbox)
+            inner_textbox.bind("<MouseWheel>", self._on_text_mousewheel)
+            inner_textbox.bind("<Button-4>", self._on_text_scroll_button)
+            inner_textbox.bind("<Button-5>", self._on_text_scroll_button)
         self.refresh_express_status()
 
     def _ctk_card(self, parent: tk.Widget, title: str) -> ctk.CTkFrame:
@@ -2447,6 +2617,59 @@ class App(ctk.CTk):
             self.advanced_section_list.selection_set(index)
             self.advanced_section_list.activate(index)
             self.advanced_section_list.see(index)
+        self.refresh_multi_section_list()
+
+    def refresh_multi_section_list(self) -> None:
+        if not hasattr(self, "multi_section_scroll"):
+            return
+        query = self.advanced_section_filter.get().strip().lower()
+        sections = [
+            section
+            for section in self.playable_sections_for_current_config("Debounce")
+            if not query or query in section.lower()
+        ]
+        self.multi_section_visible_sections = sections
+        for child in self.multi_section_scroll.winfo_children():
+            child.destroy()
+        self.multi_section_vars = {}
+        if not sections:
+            message = "No supported class/spec sections." if self.available_sections else "Load Config.ini to show class/specs."
+            ctk.CTkLabel(
+                self.multi_section_scroll,
+                text=message,
+                text_color=ctk_theme("muted"),
+                anchor="w",
+            ).pack(fill="x", padx=8, pady=6)
+            return
+        for section in sections:
+            var = tk.BooleanVar(value=section in self.selected_bind_sections)
+            self.multi_section_vars[section] = var
+            checkbox = ctk.CTkCheckBox(
+                self.multi_section_scroll,
+                text=section,
+                variable=var,
+                text_color=ctk_theme("text"),
+                command=lambda section=section, var=var: self.set_multi_section_selected(section, var.get()),
+            )
+            checkbox.pack(fill="x", anchor="w", padx=8, pady=3)
+
+    def set_multi_section_selected(self, section: str, selected: bool) -> None:
+        if selected:
+            self.selected_bind_sections.add(section)
+        else:
+            self.selected_bind_sections.discard(section)
+        self.save_current_settings()
+
+    def select_visible_multi_sections(self) -> None:
+        self.selected_bind_sections.update(self.multi_section_visible_sections)
+        self.multi_section_binds.set(True)
+        self.save_current_settings()
+        self.refresh_multi_section_list()
+
+    def clear_multi_sections(self) -> None:
+        self.selected_bind_sections.clear()
+        self.save_current_settings()
+        self.refresh_multi_section_list()
 
     def choose_express_section(self, section: str) -> None:
         if section not in self.express_sections:
@@ -2520,6 +2743,18 @@ class App(ctk.CTk):
             self.page_scroll_frame.scroll_units(direction * 20 * PAGE_SCROLL_MULTIPLIER)
         return "break"
 
+    def _on_text_mousewheel(self, event: tk.Event) -> str:
+        steps = int(-1 * (event.delta / 120)) * INNER_SCROLL_UNITS
+        if steps and self._inner_widget_can_scroll(event.widget, steps):
+            event.widget.yview_scroll(steps, "units")
+        return "break"
+
+    def _on_text_scroll_button(self, event: tk.Event) -> str:
+        direction = -INNER_SCROLL_UNITS if getattr(event, "num", 0) == 4 else INNER_SCROLL_UNITS
+        if self._inner_widget_can_scroll(event.widget, direction):
+            event.widget.yview_scroll(direction, "units")
+        return "break"
+
     def _inner_widget_can_scroll(self, widget: tk.Widget, steps: int) -> bool:
         if not steps:
             return False
@@ -2547,7 +2782,7 @@ class App(ctk.CTk):
                 widget_class = widget.winfo_class()
             except tk.TclError:
                 return True
-            if widget_class in {"TCombobox", "Listbox", "ComboboxPopdownFrame"}:
+            if widget_class in {"TCombobox", "Listbox", "Text", "ComboboxPopdownFrame"}:
                 return True
             widget = getattr(widget, "master", None)
         return False
@@ -3062,12 +3297,17 @@ class App(ctk.CTk):
         ggl_config = Path(self.ggl_config.get().strip())
         seed_config = Path(self.seed_config.get().strip()) if self.seed_config.get().strip() else None
         layout = self.current_layout()
-        bind_all = self.bind_all_sections.get()
+        multi_section = self.multi_section_binds.get()
 
-        if bind_all:
-            self.add_preflight_item(items, "Class/spec", "OK", "All playable class/spec sections.")
+        if multi_section:
+            selected_sections = self.selected_sections_for_run(macro_addon)
+            self.add_preflight_item(items, "Class/spec", "OK", "Selected class/spec sections.")
             if macro_addon == "BindPad":
-                self.add_preflight_item(items, "Bind all sections", "FAIL", "All-class binding is Debounce-only for now.", True)
+                self.add_preflight_item(items, "Selected sections", "FAIL", "Multi-spec binding is Debounce-only for now.", True)
+            elif selected_sections:
+                self.add_preflight_item(items, "Selected sections", "OK", f"{len(selected_sections)} class/spec section(s) selected.")
+            else:
+                self.add_preflight_item(items, "Selected sections", "FAIL", "Choose at least one class/spec in the multi-spec list.", True)
         elif section:
             self.add_preflight_item(items, "Class/spec", "OK", section)
             if macro_addon == "Debounce":
@@ -3110,9 +3350,9 @@ class App(ctk.CTk):
                     profile_count = len(sync.bindpad_profile_keys(vars_table))
                     self.add_preflight_item(items, "Addon file", "OK", f"BindPad file found with {profile_count} profile(s).")
                     bindpad_profile = self.active_bindpad_profile_key()
-                    if (bind_all or section != "General") and not bindpad_profile:
+                    if (multi_section or section != "General") and not bindpad_profile:
                         self.add_preflight_item(items, "BindPad profile", "FAIL", "Choose a BindPad character/profile.", True)
-                    elif bind_all or section != "General":
+                    elif multi_section or section != "General":
                         self.add_preflight_item(items, "BindPad profile", "OK", self.bindpad_profile.get().strip() or bindpad_profile or "Selected")
             except Exception as exc:
                 self.add_preflight_item(items, "Addon file", "FAIL", str(exc), True)
@@ -3129,20 +3369,13 @@ class App(ctk.CTk):
                     raise RuntimeError("Config.ini did not contain any sections.")
                 config_ok = True
                 self.add_preflight_item(items, "Config.ini", "OK", f"{len(sections)} section(s) found.")
-                if bind_all:
-                    playable = [
-                        candidate for candidate in self.express_playable_sections(section_order(sections))
-                    ]
-                    if macro_addon == "Debounce":
-                        playable = [
-                            candidate
-                            for candidate in playable
-                            if sync.retail_debounce_target_from_section(candidate)
-                        ]
-                    if playable:
-                        self.add_preflight_item(items, "Selected sections", "OK", f"{len(playable)} class/spec section(s) will be processed.")
-                    else:
-                        self.add_preflight_item(items, "Selected sections", "FAIL", "No supported class/spec sections found in Config.ini.", True)
+                if multi_section:
+                    missing = sorted(name for name in self.selected_bind_sections if name not in sections)
+                    if missing:
+                        detail = ", ".join(missing[:4])
+                        if len(missing) > 4:
+                            detail += f", +{len(missing) - 4} more"
+                        self.add_preflight_item(items, "Selected sections", "WARN", f"Not in Config.ini: {detail}")
                 elif section and section not in sections:
                     self.add_preflight_item(items, "Selected section", "FAIL", f"{section} is not in Config.ini.", True)
                 elif section:
@@ -3187,10 +3420,10 @@ class App(ctk.CTk):
             candidates = []
             self.add_preflight_item(items, "Reserved binds", "FAIL", str(exc), True)
 
-        if config_ok and (section or bind_all):
-            if bind_all:
+        if config_ok and (section or multi_section):
+            if multi_section:
                 active_actions: dict[str, set[str]] = {}
-                for run_section in self.playable_sections_for_current_config(macro_addon):
+                for run_section in self.selected_sections_for_run(macro_addon):
                     names = {entry.name for entry in sections.get(run_section, [])}
                     selected = names - self.disabled_actions_by_section.get(run_section, set())
                     if selected:
@@ -3214,7 +3447,7 @@ class App(ctk.CTk):
                     f"Largest section needs {largest_section_required} bind(s), but only {len(candidates)} usable key combination(s) are available.",
                     True,
                 )
-            elif bind_all:
+            elif multi_section:
                 self.add_preflight_item(
                     items,
                     "Actions to bind",
@@ -3224,7 +3457,7 @@ class App(ctk.CTk):
             else:
                 self.add_preflight_item(items, "Actions to bind", "OK", f"{required} active action(s).")
 
-            if bind_all:
+            if multi_section:
                 duplicates = []
                 for active_section, action_names in active_actions.items():
                     duplicates.extend(
@@ -3240,8 +3473,8 @@ class App(ctk.CTk):
             else:
                 self.add_preflight_item(items, "Duplicate loader hotkeys", "OK", "No duplicate hotkeys in the active selection.")
 
-            duplicate_macro_names = [] if bind_all else self.duplicate_addon_macro_names(active_actions)
-            if bind_all:
+            duplicate_macro_names = [] if multi_section else self.duplicate_addon_macro_names(active_actions)
+            if multi_section:
                 self.add_preflight_item(items, "Duplicate addon macro names", "OK", "Skipped across multiple sections; addon tabs are isolated by section.")
             elif duplicate_macro_names:
                 detail = "; ".join(duplicate_macro_names[:3])
@@ -3251,11 +3484,11 @@ class App(ctk.CTk):
             else:
                 self.add_preflight_item(items, "Duplicate addon macro names", "OK", "No duplicate macro names in the active selection.")
 
-            if bind_all:
+            if multi_section:
                 custom_count = 0
                 custom_errors = []
                 seen_custom_errors: set[str] = set()
-                for run_section in self.playable_sections_for_current_config(macro_addon):
+                for run_section in self.selected_sections_for_run(macro_addon):
                     count, errors = self.custom_macro_preflight_errors(sections, run_section)
                     custom_count += count
                     for error in errors:
@@ -3649,7 +3882,8 @@ class App(ctk.CTk):
             f"App version: {APP_VERSION}",
             f"Addon target: {self.macro_addon.get()}",
             f"Class/spec: {self.section.get().strip() or '(none selected)'}",
-            f"Bind all class/spec sections: {'on' if self.bind_all_sections.get() else 'off'}",
+            f"Multi-spec bind: {'on' if self.multi_section_binds.get() else 'off'}",
+            f"Multi-spec selections: {len(self.selected_bind_sections)}",
             f"Keyboard layout: {self.current_layout().name}",
             f"Global binds: {'on' if self.global_binds.get() else 'off'}",
             f"Replace loader hotkeys: {'on' if self.overwrite_ggl.get() else 'off'}",
@@ -3996,6 +4230,14 @@ class App(ctk.CTk):
                 supported.append(section)
             return supported
         return sections
+
+    def selected_sections_for_run(self, macro_addon: str | None = None) -> list[str]:
+        selected = set(self.selected_bind_sections)
+        return [
+            section
+            for section in self.playable_sections_for_current_config(macro_addon)
+            if section in selected
+        ]
 
     def refresh_custom_controls(self) -> None:
         if not hasattr(self, "custom_loader_combo"):
@@ -4439,7 +4681,8 @@ class App(ctk.CTk):
             "seed_config": self.seed_config.get(),
             "bindpad_profile": self.active_bindpad_profile_key() or self.bindpad_profile.get(),
             "global_binds": self.global_binds.get(),
-            "bind_all_sections": self.bind_all_sections.get(),
+            "multi_section_binds": self.multi_section_binds.get(),
+            "selected_bind_sections": sorted(self.selected_bind_sections),
             "overwrite_ggl": self.overwrite_ggl.get(),
             "randomize": self.randomize.get(),
             "random_seed": self.random_seed.get().strip(),
@@ -4635,15 +4878,15 @@ class App(ctk.CTk):
                 messagebox.showerror("Preflight Check", "Fix the blocking preflight issues before continuing.")
                 return
 
-            bind_all = self.bind_all_sections.get()
+            multi_section = self.multi_section_binds.get()
             section = self.section.get().strip()
-            if not section and not bind_all:
+            if not section and not multi_section:
                 raise RuntimeError("Choose a class/spec first.")
 
             addon_path = Path(self.debounce_path.get())
             macro_addon = "BindPad" if self.macro_addon.get() == "BindPad" else "Debounce"
-            if bind_all and macro_addon == "BindPad":
-                raise RuntimeError("Bind all class/spec sections is Debounce-only for now.")
+            if multi_section and macro_addon == "BindPad":
+                raise RuntimeError("Multi-spec binding is Debounce-only for now.")
             bindpad_profile = self.active_bindpad_profile_key()
             ggl_config = Path(self.ggl_config.get())
             seed_config = Path(self.seed_config.get()) if self.seed_config.get().strip() else None
@@ -4675,7 +4918,7 @@ class App(ctk.CTk):
                     raise RuntimeError("Choose a valid BindPad.lua SavedVariables file.") from exc
                 self.refresh_bindpad_profiles()
                 bindpad_profile = self.active_bindpad_profile_key()
-                if (bind_all or section != "General") and not bindpad_profile:
+                if (multi_section or section != "General") and not bindpad_profile:
                     raise RuntimeError("Choose a BindPad profile for class/spec binds.")
             if not ggl_config.exists():
                 raise RuntimeError("Choose a valid Config.ini path.")
@@ -4694,11 +4937,11 @@ class App(ctk.CTk):
             self.save_current_settings()
 
             results = []
-            if bind_all:
+            if multi_section:
                 keys_from_general: set[sync.KeyBind] = set()
-                run_sections = self.playable_sections_for_current_config(macro_addon)
+                run_sections = self.selected_sections_for_run(macro_addon)
                 if not run_sections:
-                    raise RuntimeError("No supported class/spec sections found in Config.ini.")
+                    raise RuntimeError("Choose at least one class/spec in the multi-spec list.")
 
                 if self.global_binds.get():
                     general_cleanup_names = set(GLOBAL_ACTIONS)

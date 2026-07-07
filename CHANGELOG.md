@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 1.3.0
+
+- Added Advanced Batch Specs mode for selecting multiple Debounce-supported class/spec sections.
+- Added a dedicated Batch Specs workflow with searchable checkbox rows, Select Visible, and Clear controls.
+- Batch Specs mode now hides the single-spec spell/action editor while batch mode is active.
+- Batch runs use saved per-spec spell/action toggles and process General global binds once.
+- Fixed Result window scrolling so mousewheel movement inside the result text no longer scrolls the whole app.
 - Cleaned stale BindPad managed macros across all character-specific tabs before writing new binds.
 - Added cleanup for older `GGL: ` BindPad macro names.
 - Added a preflight warning when active loader actions would create duplicate addon macro names.
