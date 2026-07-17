@@ -35,3 +35,6 @@ Interface/
 Thumbs.db
 .idea/
 .vscode/
+
+# Test artifacts
+verify_fix.py

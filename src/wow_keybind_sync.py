@@ -142,6 +142,7 @@ SCAN_CODES: dict[str, int] = {
     "NUMPADDECIMAL": 0x53,
     "NUMPADMULTIPLY": 0x37,
     "NUMPADDIVIDE": 0x135,
+    "NUMPADENTER": 0x11C,
 }
 
 SCAN_TO_KEY = {scan: key for key, scan in SCAN_CODES.items()}
@@ -226,6 +227,7 @@ CANDIDATE_BASE_ORDER = [
     "NUMPADMULTIPLY",
     "NUMPADDIVIDE",
     "NUMPADDECIMAL",
+    "NUMPADENTER",
 ]
 
 NUMPAD_BASES = {
@@ -244,6 +246,7 @@ NUMPAD_BASES = {
     "NUMPADMULTIPLY",
     "NUMPADDIVIDE",
     "NUMPADDECIMAL",
+    "NUMPADENTER",
 }
 BASE_CANDIDATE_SCANS = tuple(SCAN_CODES[base] for base in CANDIDATE_BASE_ORDER)
 FORBIDDEN_SCANS = {SCAN_CODES[base] for base in FORBIDDEN_BASES}
@@ -333,6 +336,19 @@ def normalize_key_label(label: str) -> str:
         "NUM*": "NUMPADMULTIPLY",
         "NUM/": "NUMPADDIVIDE",
         "NUM.": "NUMPADDECIMAL",
+        # NumLock-off labels that DirectInput / WoW Debounde may use
+        "NUMPADCLEAR": "NUMPAD5",
+        "CLEAR": "NUMPAD5",
+        "NUMPADEND": "NUMPAD1",
+        "NUMPADDOWN": "NUMPAD2",
+        "NUMPADPAGEDOWN": "NUMPAD3",
+        "NUMPADLEFT": "NUMPAD4",
+        "NUMPADRIGHT": "NUMPAD6",
+        "NUMPADHOME": "NUMPAD7",
+        "NUMPADUP": "NUMPAD8",
+        "NUMPADPAGEUP": "NUMPAD9",
+        "NUMPADINSERT": "NUMPAD0",
+        "NUMPADDELETE": "NUMPADDECIMAL",
     }
     return aliases.get(raw, raw)
 

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.3.1
+
+- Added NumLock-off key aliases: NUMPADCLEAR, NUMPADPAGEDOWN, NUMPADEND, NUMPADHOME, NUMPADINSERT, NUMPADDELETE, and all arrow/PageUp variants now resolve to their NumLock-on counterparts.
+- Added missing NUMPADENTER key (scan 0x11C) to SCAN_CODES, candidate lists, and display labels.
+- Fixed mismatched binds caused by addon keys stored with NumLock-off labels being unparsable.
+
 ## 1.3.0
 
 - Added Advanced Batch Specs mode for selecting multiple Debounce-supported class/spec sections.

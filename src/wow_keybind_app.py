@@ -21,7 +21,7 @@ import customtkinter as ctk
 import wow_keybind_sync as sync
 
 
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.3.1"
 
 
 GLOBAL_ACTIONS = [
@@ -1912,6 +1912,7 @@ class App(ctk.CTk):
             "NUMPADMULTIPLY": "Num *",
             "NUMPADDIVIDE": "Num /",
             "NUMPADDECIMAL": "Num .",
+            "NUMPADENTER": "Num Enter",
         }
         return numpad_labels.get(base, base)
 
