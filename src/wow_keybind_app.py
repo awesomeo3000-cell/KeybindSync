@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+import ctypes
 import dataclasses
 import datetime as dt
 import json
@@ -13,6 +14,8 @@ import sys
 import time
 import traceback
 import zipfile
+from collections.abc import Callable
+from ctypes import wintypes
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -21,7 +24,7 @@ import customtkinter as ctk
 import wow_keybind_sync as sync
 
 
-APP_VERSION = "1.3.1"
+APP_VERSION = "1.3.2"
 
 
 GLOBAL_ACTIONS = [
@@ -113,6 +116,13 @@ class BackupInfo:
     target_path: Path
     kind: str
     mtime: float
+
+
+@dataclasses.dataclass(frozen=True)
+class RunningProcess:
+    pid: int
+    name: str
+    executable: Path | None = None
 
 
 APPLY_BLOCKING_PROCESSES = {
@@ -241,6 +251,7 @@ class PageScrollableFrame(ctk.CTkScrollableFrame):
 
 
 CONFIG_EXAMPLE_PATH = r"C:\Program Files (x86)\Your Folder Name\Config.ini"
+LOADER_EXE_EXAMPLE_PATH = r"C:\Program Files (x86)\Your Folder Name\Your Loader.exe"
 SEED_CONFIG_EXAMPLE_PATH = r"C:\Program Files (x86)\Your Folder Name\Config BACKUP.ini"
 DEBOUNCE_EXAMPLE_PATH = (
     r"C:\World of Warcraft\_retail_\WTF\Account\YOUR ACCOUNT NUMBER\SavedVariables\Debounce.lua"
@@ -368,24 +379,176 @@ def load_bindpad_profiles(path: Path) -> list[tuple[str, str]]:
     return [(sync.bindpad_profile_label(key), key) for key in sync.bindpad_profile_keys(vars_table)]
 
 
-def find_running_processes(processes: dict[str, str]) -> list[str]:
+def _windows_running_processes() -> list[RunningProcess]:
+    if os.name != "nt":
+        return []
+
+    class PROCESSENTRY32W(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD),
+            ("th32DefaultHeapID", ctypes.c_size_t),
+            ("th32ModuleID", wintypes.DWORD),
+            ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD),
+            ("pcPriClassBase", wintypes.LONG),
+            ("dwFlags", wintypes.DWORD),
+            ("szExeFile", wintypes.WCHAR * 260),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    create_snapshot = kernel32.CreateToolhelp32Snapshot
+    create_snapshot.argtypes = (wintypes.DWORD, wintypes.DWORD)
+    create_snapshot.restype = wintypes.HANDLE
+    process_first = kernel32.Process32FirstW
+    process_first.argtypes = (wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W))
+    process_first.restype = wintypes.BOOL
+    process_next = kernel32.Process32NextW
+    process_next.argtypes = (wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W))
+    process_next.restype = wintypes.BOOL
+    open_process = kernel32.OpenProcess
+    open_process.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    open_process.restype = wintypes.HANDLE
+    query_image = kernel32.QueryFullProcessImageNameW
+    query_image.argtypes = (wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD))
+    query_image.restype = wintypes.BOOL
+    close_handle = kernel32.CloseHandle
+    close_handle.argtypes = (wintypes.HANDLE,)
+    close_handle.restype = wintypes.BOOL
+
+    snapshot = create_snapshot(0x00000002, 0)
+    if snapshot == wintypes.HANDLE(-1).value:
+        return []
+
+    found: list[RunningProcess] = []
+    entry = PROCESSENTRY32W()
+    entry.dwSize = ctypes.sizeof(entry)
+    try:
+        has_entry = bool(process_first(snapshot, ctypes.byref(entry)))
+        while has_entry:
+            pid = int(entry.th32ProcessID)
+            name = str(entry.szExeFile)
+            executable: Path | None = None
+            handle = open_process(0x1000, False, pid)
+            if handle:
+                try:
+                    buffer = ctypes.create_unicode_buffer(32768)
+                    size = wintypes.DWORD(len(buffer))
+                    if query_image(handle, 0, buffer, ctypes.byref(size)):
+                        executable = Path(buffer.value)
+                finally:
+                    close_handle(handle)
+            found.append(RunningProcess(pid, name, executable))
+            has_entry = bool(process_next(snapshot, ctypes.byref(entry)))
+    finally:
+        close_handle(snapshot)
+    return found
+
+
+def _path_identity(path: Path | str | None) -> str:
+    if path is None or not str(path).strip():
+        return ""
+    return os.path.normcase(os.path.abspath(os.path.expandvars(str(path))))
+
+
+def match_blocking_processes(
+    running_processes: list[RunningProcess],
+    processes: dict[str, str],
+    config_path: Path | None = None,
+    loader_executable: Path | None = None,
+) -> list[str]:
+    config_folder = _path_identity(config_path.parent) if config_path else ""
+    selected_loader = _path_identity(loader_executable)
+    selected_loader_name = loader_executable.name.lower() if loader_executable else ""
+    current_pid = os.getpid()
+    found: set[str] = set()
+
+    for process in running_processes:
+        if process.pid == current_pid:
+            continue
+        process_name = process.name.strip()
+        process_name_key = process_name.lower()
+        known_label = processes.get(process_name_key)
+        if known_label:
+            found.add(known_label)
+
+        process_path = _path_identity(process.executable)
+        if selected_loader and (
+            process_path == selected_loader
+            or (not process_path and process_name_key == selected_loader_name)
+        ):
+            found.add(f"Selected loader ({process_name})")
+            continue
+
+        if (
+            not known_label
+            and config_folder
+            and process_path
+            and _path_identity(Path(process_path).parent) == config_folder
+        ):
+            found.add(f"Config.ini folder process ({process_name})")
+
+    return sorted(found)
+
+
+def find_running_processes(
+    processes: dict[str, str],
+    config_path: Path | None = None,
+    loader_executable: Path | None = None,
+) -> list[str]:
+    try:
+        running = _windows_running_processes()
+    except Exception:
+        running = []
+
+    if running:
+        return match_blocking_processes(running, processes, config_path, loader_executable)
+
+    # Fall back to image names when Windows refuses process-path enumeration.
     try:
         output = subprocess.check_output(
             ["tasklist", "/FO", "CSV", "/NH"],
             text=True,
             stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except Exception:
         return []
 
-    found: set[str] = set()
-    for row in csv.reader(output.splitlines()):
-        if not row:
-            continue
-        label = processes.get(row[0].strip().lower())
-        if label:
-            found.add(label)
-    return sorted(found)
+    fallback_processes = [
+        RunningProcess(index + 1, row[0].strip())
+        for index, row in enumerate(csv.reader(output.splitlines()))
+        if row
+    ]
+    return match_blocking_processes(fallback_processes, processes, config_path, loader_executable)
+
+
+def file_has_exclusive_access_conflict(path: Path) -> bool:
+    if os.name != "nt" or not path.is_file():
+        return False
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    create_file = kernel32.CreateFileW
+    create_file.argtypes = (
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    )
+    create_file.restype = wintypes.HANDLE
+    close_handle = kernel32.CloseHandle
+    close_handle.argtypes = (wintypes.HANDLE,)
+    close_handle.restype = wintypes.BOOL
+
+    handle = create_file(str(path), 0x80000000, 0, None, 3, 0x80, None)
+    if handle == wintypes.HANDLE(-1).value:
+        return ctypes.get_last_error() in {32, 33}
+    close_handle(handle)
+    return False
 
 
 def load_sections(ggl_config: Path) -> list[str]:
@@ -635,6 +798,7 @@ def run_once(
     macro_overrides: dict[str, sync.MacroOverride] | None = None,
     loader_context_sections: set[str] | None = None,
     cleanup_names: set[str] | None = None,
+    before_apply: Callable[[], None] | None = None,
 ) -> tuple[str, list[sync.PlannedBind]]:
     ggl_text, ggl_encoding, ggl_newline = sync.read_text(ggl_config)
     sections, ggl_lines = sync.parse_ggl_entries(ggl_text)
@@ -746,6 +910,8 @@ def run_once(
         lines.append(f"  Warnings: {len(warnings)}. See the report.")
 
     if apply:
+        if before_apply:
+            before_apply()
         cleanup_keys = {plan.key.debounce(layout) for plan in plans if plan.key}
         addon_text, addon_encoding, _ = sync.read_text(addon_path)
         addon_backup = sync.backup_file(addon_path)
@@ -762,7 +928,8 @@ def run_once(
                 cleanup_keys=cleanup_keys,
                 layout=layout,
             )
-            sync.write_text(addon_path, "BindPadVars = " + sync.dump_lua(vars_table) + "\n", addon_encoding)
+            addon_output = "BindPadVars = " + sync.dump_lua(vars_table) + "\n"
+            sync.write_text(addon_path, addon_output, addon_encoding)
         else:
             vars_table = sync.parse_debounce_vars(addon_text)
             if class_file is None:
@@ -777,13 +944,25 @@ def run_once(
                 cleanup_keys=cleanup_keys,
                 layout=layout,
             )
-            sync.write_text(addon_path, "DebounceVars = " + sync.dump_lua(vars_table) + "\n", addon_encoding)
+            addon_output = "DebounceVars = " + sync.dump_lua(vars_table) + "\n"
+            sync.write_text(addon_path, addon_output, addon_encoding)
 
         cleanup_entries = [
             entry for entry in sections.get(section, []) if entry.name in cleanup_names
         ]
         new_lines = sync.rewrite_ggl_lines(ggl_lines, plans, overwrite_ggl, cleanup_entries)
-        sync.write_text(ggl_config, ggl_newline.join(new_lines) + ggl_newline, ggl_encoding)
+        ggl_output = ggl_newline.join(new_lines) + ggl_newline
+        sync.write_text(ggl_config, ggl_output, ggl_encoding)
+
+        addon_written, _, _ = sync.read_text(addon_path)
+        ggl_written, _, _ = sync.read_text(ggl_config)
+        if addon_written != addon_output or ggl_written != ggl_output:
+            failed = []
+            if addon_written != addon_output:
+                failed.append(addon_label)
+            if ggl_written != ggl_output:
+                failed.append("Config.ini")
+            raise RuntimeError("Post-write verification failed for: " + ", ".join(failed))
 
         lines.append("  Applied.")
         lines.append(f"  {addon_label} backup: {addon_backup}")
@@ -818,6 +997,7 @@ class App(ctk.CTk):
         self.macro_addon = tk.StringVar(value=str(self.settings.get("macro_addon", "Debounce")))
         self.debounce_path = tk.StringVar(value=str(self.settings.get("debounce_path", "")))
         self.ggl_config = tk.StringVar(value=str(self.settings.get("ggl_config", "")))
+        self.loader_executable = tk.StringVar(value=str(self.settings.get("loader_executable", "")))
         self.seed_config = tk.StringVar(value=str(self.settings.get("seed_config", "")))
         self.bindpad_profile = tk.StringVar(value=str(self.settings.get("bindpad_profile", "")))
         self.bindpad_profile_labels: dict[str, str] = {}
@@ -922,6 +1102,7 @@ class App(ctk.CTk):
             self.macro_addon,
             self.debounce_path,
             self.ggl_config,
+            self.loader_executable,
             self.bindpad_profile,
             self.section,
         ):
@@ -1394,10 +1575,11 @@ class App(ctk.CTk):
         self.macro_addon_combo.grid(row=1, column=1, sticky="w", padx=(0, 10), pady=4)
         self._advanced_path_row(card, "Addon file", self.debounce_path, 2)
         self._advanced_path_row(card, "Config.ini", self.ggl_config, 3)
-        self._advanced_path_row(card, "Seed config", self.seed_config, 4)
+        self._advanced_path_row(card, "Loader exe", self.loader_executable, 4)
+        self._advanced_path_row(card, "Seed config", self.seed_config, 5)
 
         ctk.CTkLabel(card, text="BindPad profile", text_color=ctk_theme("text"), anchor="w").grid(
-            row=5,
+            row=6,
             column=0,
             sticky="w",
             padx=(14, 8),
@@ -1411,12 +1593,12 @@ class App(ctk.CTk):
             state="readonly",
             command=lambda _value: self.save_current_settings(),
         )
-        self.bindpad_profile_combo.grid(row=5, column=1, sticky="ew", padx=(0, 10), pady=4)
+        self.bindpad_profile_combo.grid(row=6, column=1, sticky="ew", padx=(0, 10), pady=4)
         self.bindpad_profile_combos.append(self.bindpad_profile_combo)
         self._ctk_hint(
             card,
-            "Choose the WTF SavedVariables file. Seed config is optional and usually only useful when not randomizing.",
-            6,
+            "Loader exe is optional unless it is outside the Config.ini folder. Seed config is optional and usually only useful when not randomizing.",
+            7,
             wraplength=360,
         )
 
@@ -3021,6 +3203,12 @@ class App(ctk.CTk):
                 [CONFIG_EXAMPLE_PATH],
                 [("Config.ini", "Config.ini"), ("INI files", "*.ini"), ("All files", "*.*")],
             )
+        if var is self.loader_executable:
+            return (
+                "Path to loader executable",
+                [LOADER_EXE_EXAMPLE_PATH],
+                [("Applications", "*.exe"), ("All files", "*.*")],
+            )
         if var is self.seed_config:
             return (
                 "Path to seed Config.ini",
@@ -3199,6 +3387,35 @@ class App(ctk.CTk):
         blocking: bool = False,
     ) -> None:
         items.append(PreflightItem(label, status, detail, blocking and status == "FAIL"))
+
+    def configured_loader_executable(self) -> Path | None:
+        raw = self.loader_executable.get().strip().strip('"')
+        return Path(raw) if raw else None
+
+    def running_apply_blockers(self, config_path: Path | None = None) -> list[str]:
+        if config_path is None:
+            raw = self.ggl_config.get().strip().strip('"')
+            config_path = Path(raw) if raw else None
+        return find_running_processes(
+            APPLY_BLOCKING_PROCESSES,
+            config_path,
+            self.configured_loader_executable(),
+        )
+
+    def ensure_apply_targets_available(self, addon_path: Path, config_path: Path) -> None:
+        blockers = self.running_apply_blockers(config_path)
+        locked = [
+            path.name
+            for path in (addon_path, config_path)
+            if file_has_exclusive_access_conflict(path)
+        ]
+        if blockers or locked:
+            details: list[str] = []
+            if blockers:
+                details.append("Close: " + ", ".join(blockers))
+            if locked:
+                details.append("Files currently in use: " + ", ".join(locked))
+            raise RuntimeError("Cannot Apply while WoW or the loader may be running. " + "; ".join(details))
 
     def active_preflight_actions(
         self,
@@ -3398,6 +3615,27 @@ class App(ctk.CTk):
             except Exception as exc:
                 self.add_preflight_item(items, "Config.ini", "FAIL", str(exc), True)
 
+        loader_executable = self.configured_loader_executable()
+        if loader_executable:
+            if loader_executable.is_file():
+                self.add_preflight_item(items, "Loader executable", "OK", loader_executable.name)
+            else:
+                status = "FAIL" if apply else "WARN"
+                self.add_preflight_item(
+                    items,
+                    "Loader executable",
+                    status,
+                    "The saved loader path no longer exists. Clear it or select the renamed executable.",
+                    apply,
+                )
+        else:
+            self.add_preflight_item(
+                items,
+                "Loader executable",
+                "OK",
+                "Optional; running executables in the Config.ini folder are still detected.",
+            )
+
         try:
             enabled_scans = self.selected_keys()
             enabled_mods = self.selected_mods()
@@ -3508,13 +3746,30 @@ class App(ctk.CTk):
             else:
                 self.add_preflight_item(items, "Custom macros", "OK", "No active custom macro overrides.")
 
-        running = find_running_processes(APPLY_BLOCKING_PROCESSES)
+        running = self.running_apply_blockers(ggl_config if ggl_config.exists() else None)
         if running:
             status = "FAIL" if apply else "WARN"
             detail = "Close before Apply: " + ", ".join(running)
             self.add_preflight_item(items, "WoW / loader closed", status, detail, apply)
         else:
             self.add_preflight_item(items, "WoW / loader closed", "OK", "No blocking processes detected.")
+
+        locked_files = [
+            path.name
+            for path in (addon_path, ggl_config)
+            if path.exists() and file_has_exclusive_access_conflict(path)
+        ]
+        if locked_files:
+            status = "FAIL" if apply else "WARN"
+            self.add_preflight_item(
+                items,
+                "Files not in use",
+                status,
+                "Close the application using: " + ", ".join(locked_files),
+                apply,
+            )
+        else:
+            self.add_preflight_item(items, "Files not in use", "OK", "Addon and Config.ini are available.")
 
         if addon_ok and config_ok:
             self.add_preflight_item(items, "File writes", "OK", "Backups will be created before Apply writes changes.")
@@ -3840,10 +4095,12 @@ class App(ctk.CTk):
         add(self.reports_dir(), "<REPORTS_FOLDER>")
         add(self.debounce_path.get(), "<ADDON_FILE>")
         add(self.ggl_config.get(), "<CONFIG_INI>")
+        add(self.loader_executable.get(), "<LOADER_EXE>")
         add(self.seed_config.get(), "<SEED_CONFIG>")
         for raw, label in (
             (self.debounce_path.get(), "<ADDON_FOLDER>"),
             (self.ggl_config.get(), "<CONFIG_FOLDER>"),
+            (self.loader_executable.get(), "<LOADER_FOLDER>"),
             (self.seed_config.get(), "<SEED_FOLDER>"),
         ):
             if str(raw).strip():
@@ -3952,7 +4209,9 @@ class App(ctk.CTk):
                 raise RuntimeError("Choose a valid Debounce.lua path.")
             addon_path = normalize_debounce_path(addon_path)
             self.debounce_path.set(str(addon_path))
-            running = find_running_processes(APPLY_BLOCKING_PROCESSES)
+            config_raw = self.ggl_config.get().strip().strip('"')
+            config_path = Path(config_raw) if config_raw else None
+            running = self.running_apply_blockers(config_path)
             if running:
                 raise RuntimeError(
                     "Close these before cleaning Debounce: "
@@ -4679,6 +4938,7 @@ class App(ctk.CTk):
             "dark_mode": self.dark_mode.get(),
             "debounce_path": self.debounce_path.get(),
             "ggl_config": self.ggl_config.get(),
+            "loader_executable": self.loader_executable.get(),
             "seed_config": self.seed_config.get(),
             "bindpad_profile": self.active_bindpad_profile_key() or self.bindpad_profile.get(),
             "global_binds": self.global_binds.get(),
@@ -4871,6 +5131,8 @@ class App(ctk.CTk):
             self.restore_express_state_snapshot(snapshot)
 
     def run(self, apply: bool) -> None:
+        rollback_snapshot: dict[Path, bytes] | None = None
+        apply_write_started = False
         try:
             preflight_items = self.collect_preflight_items(apply=apply)
             preflight_text = self.format_preflight(preflight_items, apply=apply)
@@ -4924,13 +5186,11 @@ class App(ctk.CTk):
             if not ggl_config.exists():
                 raise RuntimeError("Choose a valid Config.ini path.")
             if apply:
-                running = find_running_processes(APPLY_BLOCKING_PROCESSES)
-                if running:
-                    raise RuntimeError(
-                        "Close these before applying: "
-                        + ", ".join(running)
-                        + ". Then run Apply again."
-                    )
+                self.ensure_apply_targets_available(addon_path, ggl_config)
+                rollback_snapshot = {
+                    addon_path: addon_path.read_bytes(),
+                    ggl_config: ggl_config.read_bytes(),
+                }
             random_seed = self.random_seed.get().strip() if self.randomize.get() else None
             if self.randomize.get() and not random_seed:
                 random_seed = sync.new_random_seed()
@@ -4938,6 +5198,12 @@ class App(ctk.CTk):
             self.save_current_settings()
 
             results = []
+
+            def before_apply_check() -> None:
+                nonlocal apply_write_started
+                self.ensure_apply_targets_available(addon_path, ggl_config)
+                apply_write_started = True
+
             if multi_section:
                 keys_from_general: set[sync.KeyBind] = set()
                 run_sections = self.selected_sections_for_run(macro_addon)
@@ -4970,6 +5236,7 @@ class App(ctk.CTk):
                         macro_overrides=self.custom_overrides_for_section("General"),
                         loader_context_sections={"General"},
                         cleanup_names=general_cleanup_names,
+                        before_apply=before_apply_check,
                     )
                     results.append(result)
                     keys_from_general.update(plan.key for plan in plans if plan.key)
@@ -4999,6 +5266,7 @@ class App(ctk.CTk):
                         macro_overrides=self.custom_overrides_for_section(run_section),
                         loader_context_sections=loader_context_sections,
                         cleanup_names=spec_cleanup_names,
+                        before_apply=before_apply_check,
                     )
                     results.append(result)
             else:
@@ -5027,6 +5295,7 @@ class App(ctk.CTk):
                         macro_overrides=self.custom_overrides_for_section(section),
                         loader_context_sections=loader_context_sections,
                         cleanup_names=spec_cleanup_names,
+                        before_apply=before_apply_check,
                     )
                     results.append(result)
                     keys_from_prior_passes.update(plan.key for plan in plans if plan.key)
@@ -5058,6 +5327,7 @@ class App(ctk.CTk):
                         macro_overrides=self.custom_overrides_for_section("General"),
                         loader_context_sections=loader_context_sections,
                         cleanup_names=general_cleanup_names,
+                        before_apply=before_apply_check,
                     )
                     results.append(result)
                 elif section == "General":
@@ -5083,6 +5353,7 @@ class App(ctk.CTk):
                         macro_overrides=self.custom_overrides_for_section("General"),
                         loader_context_sections=loader_context_sections,
                         cleanup_names=general_cleanup_names,
+                        before_apply=before_apply_check,
                     )
                     results.append(result)
 
@@ -5091,9 +5362,21 @@ class App(ctk.CTk):
             if apply:
                 messagebox.showinfo("Done", "Keybinds applied. Restart/reload WoW and the loader before relying on them.")
         except Exception as exc:
+            rollback_message = ""
+            if rollback_snapshot and apply_write_started:
+                rollback_errors: list[str] = []
+                for path, original_bytes in rollback_snapshot.items():
+                    try:
+                        sync.write_bytes_atomic(path, original_bytes)
+                    except Exception as rollback_exc:
+                        rollback_errors.append(f"{path.name}: {rollback_exc}")
+                if rollback_errors:
+                    rollback_message = "\nRollback had errors: " + "; ".join(rollback_errors)
+                else:
+                    rollback_message = "\nAll file changes from this Apply attempt were rolled back."
             details = traceback.format_exc()
-            self.write_log(f"{exc}\n\n{details}")
-            messagebox.showerror("Keybind Sync", str(exc))
+            self.write_log(f"{exc}{rollback_message}\n\n{details}")
+            messagebox.showerror("Keybind Sync", str(exc) + rollback_message)
 
 
 if __name__ == "__main__":

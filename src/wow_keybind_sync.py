@@ -251,6 +251,7 @@ NUMPAD_BASES = {
 BASE_CANDIDATE_SCANS = tuple(SCAN_CODES[base] for base in CANDIDATE_BASE_ORDER)
 FORBIDDEN_SCANS = {SCAN_CODES[base] for base in FORBIDDEN_BASES}
 NUMPAD_SCANS = {SCAN_CODES[base] for base in NUMPAD_BASES}
+NUMPAD_DIGIT_SCANS = {SCAN_CODES[f"NUMPAD{digit}"] for digit in range(10)}
 DEFAULT_BIND_BASES = [
     base
     for base in CANDIDATE_BASE_ORDER
@@ -820,16 +821,7 @@ def read_text(path: Path) -> tuple[str, str, str]:
     return text, write_encoding, newline
 
 
-def write_text(path: Path, text: str, encoding: str) -> None:
-    if encoding == "utf-16-le-bom":
-        data = b"\xff\xfe" + text.encode("utf-16-le")
-    elif encoding == "utf-16-be-bom":
-        data = b"\xfe\xff" + text.encode("utf-16-be")
-    else:
-        try:
-            data = text.encode(encoding)
-        except UnicodeEncodeError:
-            data = text.encode("utf-8")
+def write_bytes_atomic(path: Path, data: bytes) -> None:
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     temp = path.with_name(f".{path.name}.tmp-{stamp}")
     try:
@@ -841,6 +833,19 @@ def write_text(path: Path, text: str, encoding: str) -> None:
         except OSError:
             pass
         raise
+
+
+def write_text(path: Path, text: str, encoding: str) -> None:
+    if encoding == "utf-16-le-bom":
+        data = b"\xff\xfe" + text.encode("utf-16-le")
+    elif encoding == "utf-16-be-bom":
+        data = b"\xfe\xff" + text.encode("utf-16-be")
+    else:
+        try:
+            data = text.encode(encoding)
+        except UnicodeEncodeError:
+            data = text.encode("utf-8")
+    write_bytes_atomic(path, data)
 
 
 def backup_file(path: Path) -> Path:
@@ -1055,6 +1060,8 @@ def parse_keybind_label(label: str, layout: KeyLayout | None = None) -> KeyBind:
     raw = label.strip()
     if not raw:
         raise ValueError("empty keybind")
+    raw = re.sub(r"(?i)(?:NUM|NUMPAD)\+$", "NUMPADPLUS", raw)
+    raw = re.sub(r"(?i)(?:NUM|NUMPAD)-$", "NUMPADMINUS", raw)
     parts = [part.strip() for part in re.split(r"[+-]", raw) if part.strip()]
     if not parts:
         raise ValueError("empty keybind")
@@ -1128,6 +1135,8 @@ def is_key_allowed(
     if enabled_scans is not None and key.scan_code not in enabled_scans:
         return False
     if enabled_mods is not None and any(mod not in enabled_mods for mod in key.mods):
+        return False
+    if key.scan_code in NUMPAD_DIGIT_SCANS and "ALT" in key.mods:
         return False
     if not key.mods and not allow_unmodified:
         return False

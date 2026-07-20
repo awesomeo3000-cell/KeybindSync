@@ -9,6 +9,7 @@ if (-not (Test-Path ".venv")) {
 
 & ".\.venv\Scripts\python.exe" -m pip install --upgrade pip
 & ".\.venv\Scripts\python.exe" -m pip install -r requirements.txt
+& ".\.venv\Scripts\python.exe" -m unittest discover -s tests -v
 & ".\.venv\Scripts\python.exe" -m PyInstaller --onefile --windowed --name WoWKeyBindSync src\wow_keybind_app.py
 
 Write-Host "Build complete: $Root\dist\WoWKeyBindSync.exe"

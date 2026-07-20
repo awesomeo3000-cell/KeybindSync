@@ -25,6 +25,8 @@ The app is built around a preview-first workflow:
 - Keyboard layout profiles, including US QWERTY, German QWERTZ, and International Safe.
 - Preview CSV reports before writes.
 - Backups before Apply and cleanup writes.
+- Renamed-loader detection based on the selected `Config.ini` folder, plus an optional explicit loader path.
+- File-in-use checks, post-write verification, and automatic rollback when an Apply fails.
 - Preflight setup checks.
 - Backup manager.
 - Redacted support bundle export for bug reports.

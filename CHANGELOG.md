@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 1.3.2
+
+- Detects any running executable launched from the selected `Config.ini` folder, so renamed loader executables are blocked before Apply.
+- Added an optional Advanced `Loader exe` path for setups where the executable is stored outside the `Config.ini` folder.
+- Added exclusive-access checks for the addon file and `Config.ini`, with a second process/file check immediately before each write.
+- Added post-write verification and whole-run rollback so a failed Apply does not leave the addon and loader files out of sync.
+- Fixed reserved-bind parsing for `NUM+`, `NUM-`, and modifier variants such as `CTRL+NUM+`.
+- Stopped generating `Alt` + numpad digit binds because Windows may consume them as character-entry sequences.
+- Added automated process-safety and numpad regression tests to local builds and GitHub Actions.
+
 ## 1.3.1
 
 - Added NumLock-off key aliases: NUMPADCLEAR, NUMPADPAGEDOWN, NUMPADEND, NUMPADHOME, NUMPADINSERT, NUMPADDELETE, and all arrow/PageUp variants now resolve to their NumLock-on counterparts.
