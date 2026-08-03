@@ -21,6 +21,55 @@ class CleanupTests(unittest.TestCase):
                 self.assertEqual(key.human(), "NUMPAD5")
                 self.assertEqual(key.debounce(), "NUMPAD5")
 
+    def test_legacy_numpad_page_aliases_are_removed_during_replacement(self) -> None:
+        action = sync.GglEntry("Warrior - Fury", 0, "Charge", "", "", "")
+        plans = [
+            sync.PlannedBind(
+                action=action,
+                key=sync.KeyBind("NUMPAD3"),
+                ggl_token="sc51_123",
+                source="generated",
+                macro="/cast Charge",
+                icon=1,
+            ),
+            sync.PlannedBind(
+                action=sync.GglEntry("Warrior - Fury", 1, "Interrupt", "", "", ""),
+                key=sync.KeyBind("NUMPAD9"),
+                ggl_token="sc49_123",
+                source="generated",
+                macro="/cast Interrupt",
+                icon=1,
+            ),
+        ]
+        vars_table = {
+            "WARRIOR": {
+                2: {
+                    1: {"name": "old down", "key": "NUMPAGEDOWN"},
+                    2: {"name": "old page up", "key": "NUMPADPAGEUP"},
+                    3: {"name": "keep", "key": "Q"},
+                }
+            }
+        }
+
+        sync.update_debounce(
+            vars_table,
+            "WARRIOR",
+            2,
+            plans,
+            replace_managed=True,
+        )
+
+        keys = [
+            item.get("key")
+            for item in sync.layer_to_list(vars_table["WARRIOR"][2])
+            if isinstance(item, dict)
+        ]
+        self.assertNotIn("NUMPAGEDOWN", keys)
+        self.assertNotIn("NUMPADPAGEUP", keys)
+        self.assertIn("NUMPAD3", keys)
+        self.assertIn("NUMPAD9", keys)
+        self.assertIn("Q", keys)
+
     def test_general_actions_are_dynamic_and_keep_config_names(self) -> None:
         names = {
             "Focus Party1",

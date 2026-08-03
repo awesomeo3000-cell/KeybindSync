@@ -345,11 +345,13 @@ def normalize_key_label(label: str) -> str:
         "CLEAR": "NUMPAD5",
         "NUMPADEND": "NUMPAD1",
         "NUMPADDOWN": "NUMPAD2",
+        "NUMPAGEDOWN": "NUMPAD3",
         "NUMPADPAGEDOWN": "NUMPAD3",
         "NUMPADLEFT": "NUMPAD4",
         "NUMPADRIGHT": "NUMPAD6",
         "NUMPADHOME": "NUMPAD7",
         "NUMPADUP": "NUMPAD8",
+        "NUMPAGEUP": "NUMPAD9",
         "NUMPADPAGEUP": "NUMPAD9",
         "NUMPADINSERT": "NUMPAD0",
         "NUMPADDELETE": "NUMPADDECIMAL",
@@ -1108,6 +1110,33 @@ def parse_keybind_label(label: str, layout: KeyLayout | None = None) -> KeyBind:
     return KeyBind(scan_code, tuple(mod for mod in MODIFIER_ORDER if mod in mods))
 
 
+def canonical_debounce_key(value: object, layout: KeyLayout | None = None) -> str | None:
+    """Return the canonical Debounce token for a key label or token."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    selected_layout = layout or US_QWERTY_LAYOUT
+    try:
+        return parse_keybind_label(value, selected_layout).debounce(selected_layout)
+    except ValueError:
+        return None
+
+
+def key_matches_cleanup(
+    value: object,
+    keys: set[str],
+    layout: KeyLayout | None = None,
+) -> bool:
+    """Match canonical keys and legacy NumLock-off aliases during cleanup."""
+    if not isinstance(value, str):
+        return False
+    if value in keys:
+        return True
+    canonical = canonical_debounce_key(value, layout)
+    if canonical is None:
+        return False
+    return any(canonical_debounce_key(key, layout) == canonical for key in keys)
+
+
 def parse_keybind_set(raw: str | None, layout: KeyLayout | None = None) -> set[KeyBind]:
     selected_layout = layout or US_QWERTY_LAYOUT
     if not raw:
@@ -1625,7 +1654,9 @@ def update_debounce(
                 isinstance(action, dict)
                 and (
                     action.get("source") == MANAGED_SOURCE
-                    or action.get("key") in keys_to_remove
+                    or key_matches_cleanup(
+                        action.get("key"), keys_to_remove, selected_layout
+                    )
                     or (
                         isinstance(action.get("name"), str)
                         and (
@@ -1719,10 +1750,18 @@ def remove_bindpad_actions(binding_table: dict[Any, Any], managed_actions: set[s
         del binding_table[key]
 
 
-def remove_bindpad_keys(binding_table: dict[Any, Any], keys: set[str]) -> None:
+def remove_bindpad_keys(
+    binding_table: dict[Any, Any],
+    keys: set[str],
+    layout: KeyLayout | None = None,
+) -> None:
     if not keys:
         return
-    for key in [key for key in binding_table if isinstance(key, str) and key in keys]:
+    for key in [
+        key
+        for key in binding_table
+        if key_matches_cleanup(key, keys, layout)
+    ]:
         del binding_table[key]
 
 
@@ -1807,7 +1846,7 @@ def update_bindpad(
         vars_table.setdefault("numSlot", BINDPAD_DEFAULT_SLOTS)
         managed_actions = replace_bindpad_slots(vars_table, new_slots, names_to_remove)
         remove_bindpad_actions(general_keys, managed_actions)
-        remove_bindpad_keys(general_keys, keys_to_remove)
+        remove_bindpad_keys(general_keys, keys_to_remove, selected_layout)
         profile_tables: list[dict[Any, Any]] = []
         for candidate_key in bindpad_profile_keys(vars_table):
             character = vars_table.get(candidate_key)
@@ -1819,7 +1858,7 @@ def update_bindpad(
                 all_keys = profile.setdefault("AllKeyBindings", {})
                 if isinstance(all_keys, dict):
                     remove_bindpad_actions(all_keys, managed_actions)
-                    remove_bindpad_keys(all_keys, keys_to_remove)
+                    remove_bindpad_keys(all_keys, keys_to_remove, selected_layout)
                     profile_tables.append(all_keys)
         for plan in plans:
             name = plan.debounce_name or plan.action.name
@@ -1849,7 +1888,7 @@ def update_bindpad(
         all_keys = {}
         _profile["AllKeyBindings"] = all_keys
     remove_bindpad_actions(all_keys, managed_actions)
-    remove_bindpad_keys(all_keys, keys_to_remove)
+    remove_bindpad_keys(all_keys, keys_to_remove, selected_layout)
     for plan in plans:
         name = plan.debounce_name or plan.action.name
         if not plan.key or not plan.macro:
