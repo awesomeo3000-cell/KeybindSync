@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.5
+
+- Replaces legacy NumLock-off aliases such as `NUMPAGEDOWN`, `NUMPADPAGEDOWN`, `NUMPAGEUP`, and `NUMPADPAGEUP` instead of leaving stale entries beside the new numeric NumPad binds.
+- Applies alias-aware cleanup to both Debounce and BindPad key tables across class/spec profiles.
+
 ## 1.3.4
 
 - Stopped generating Shift + NumPad digit binds, which can be interpreted as navigation keys such as End, Clear, or Page Down instead of the numeric keypad key selected by the user.
