@@ -24,7 +24,7 @@ import customtkinter as ctk
 import wow_keybind_sync as sync
 
 
-APP_VERSION = "1.3.3"
+APP_VERSION = "1.3.4"
 
 
 def general_action_names(names: set[str] | list[str]) -> set[str]:
@@ -2311,7 +2311,8 @@ class App(ctk.CTk):
             text=(
                 "Full keyboard? Click Enable Numpad. Num 5 is one physical key: with Num Lock on "
                 "loaders may say NUMPAD5; with Num Lock off they may say NUMPADCLEAR, CLEAR, "
-                "or NUMPADDCLE. Enable Num 5—there is no separate Clear key to select."
+                "or NUMPADDCLE. Enable Num 5\u2014there is no separate Clear key to select. "
+                "Shift + NumPad digits are excluded; use plain NumPad or Ctrl + NumPad."
             ),
             text_color=ctk_theme("muted"),
             anchor="w",

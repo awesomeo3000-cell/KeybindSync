@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.4
+
+- Stopped generating Shift + NumPad digit binds, which can be interpreted as navigation keys such as End, Clear, or Page Down instead of the numeric keypad key selected by the user.
+- Ctrl + NumPad digit binds remain available.
+
 ## 1.3.3
 
 - The Advanced cleanup action can now clear old key assignments from the selected `Config.ini` section, the selected Debounce target, or both, with backups and verification.

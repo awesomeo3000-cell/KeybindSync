@@ -1160,7 +1160,12 @@ def is_key_allowed(
         return False
     if enabled_mods is not None and any(mod not in enabled_mods for mod in key.mods):
         return False
-    if key.scan_code in NUMPAD_DIGIT_SCANS and "ALT" in key.mods:
+    # Shift changes the NumPad digit's meaning in the Windows input stack
+    # (for example, NumPad 1 can behave like End).  Do not generate these
+    # ambiguous binds; Ctrl+NumPad remains supported.
+    if key.scan_code in NUMPAD_DIGIT_SCANS and (
+        "ALT" in key.mods or "SHIFT" in key.mods
+    ):
         return False
     if not key.mods and not allow_unmodified:
         return False
