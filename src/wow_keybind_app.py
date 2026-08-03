@@ -27,26 +27,34 @@ import wow_keybind_sync as sync
 APP_VERSION = "1.3.2"
 
 
-GLOBAL_ACTIONS = [
-    "TargetMouseOver",
-    "TargetEnemy",
-    "TargetLastTarget",
-    "StartAttack",
-    "Trinket1",
-    "Trinket2",
-    "HealthStone",
-    "HealingPotion",
-    "Target Arena1",
-    "Target Arena2",
-    "Target Arena3",
-    "Target Arena4",
-    "Target Arena5",
-    "Focus Arena1",
-    "Focus Arena2",
-    "Focus Arena3",
-    "Focus Arena4",
-    "Focus Arena5",
-]
+def general_action_names(names: set[str] | list[str]) -> set[str]:
+    """Return every non-empty action name discovered in Config.ini [General]."""
+    return {str(name).strip() for name in names if str(name).strip()}
+
+
+def read_num_lock_state() -> bool | None:
+    """Read the Windows NumLock toggle; return None when the state is unavailable."""
+    if os.name != "nt":
+        return None
+    try:
+        return bool(ctypes.windll.user32.GetKeyState(0x90) & 1)
+    except (AttributeError, OSError):
+        return None
+
+
+def num_lock_guidance(num_pad_selected: bool, state: bool | None) -> tuple[str, str] | None:
+    """Return the preflight status/detail for a selected NumPad key pool."""
+    if not num_pad_selected:
+        return None
+    if state is True:
+        return "OK", "NumPad keys selected; NumLock is ON."
+    if state is False:
+        return (
+            "WARN",
+            "NumPad keys selected, but NumLock is OFF. Turn NumLock ON in WoW before binding and testing; otherwise the loader may display Page Down/Clear labels.",
+        )
+    return "WARN", "NumPad keys selected, but NumLock state could not be read. Turn NumLock ON in WoW before binding and testing."
+
 
 GLOBAL_CUSTOM_TARGETING_ACTIONS = {
     "TargetMouseOver",
@@ -90,14 +98,10 @@ CUSTOM_MACRO_TEMPLATE_INSTRUCTIONS = [
     },
 ]
 
-GLOBAL_BIND_DISPLAY_GROUPS = [
+GENERAL_BIND_DISPLAY_GROUPS = [
     (
-        "Targeting",
-        "Mouseover, enemy, last target, target arena 1-5, focus arena 1-5",
-    ),
-    (
-        "Utility",
-        "Start attack, trinket 1/2, healthstone, healing potion",
+        "General actions",
+        "Every non-empty action in the Config.ini [General] section is available.",
     ),
 ]
 
@@ -1091,7 +1095,7 @@ class App(ctk.CTk):
         self.express_profile_status = tk.StringVar(value="")
         self.express_section_status = tk.StringVar(value="Choose class/spec")
         self.express_ready_status = tk.StringVar(value="Choose files to begin.")
-        self.express_global_status = tk.StringVar(value="Load Config.ini to check global binds.")
+        self.express_global_status = tk.StringVar(value="Load Config.ini to check General actions.")
         self.express_global_missing = tk.StringVar(value="")
         self.express_custom_status = tk.StringVar(value="No custom macros imported.")
         self.advanced_section_filter.trace_add("write", lambda *_args: self.refresh_advanced_section_picker())
@@ -1110,6 +1114,7 @@ class App(ctk.CTk):
         self.reload_sections()
         self.after(500, self._prewarm_tabs)
         self.after(250, self.prompt_for_missing_paths)
+        self.after(1000, self.poll_numlock_status)
 
     def _apply_theme(self) -> None:
         style = ttk.Style(self)
@@ -1786,7 +1791,7 @@ class App(ctk.CTk):
         option_row.grid(row=3, column=0, columnspan=3, sticky="ew", padx=14, pady=(2, 0))
         ctk.CTkCheckBox(
             option_row,
-            text="Global targeting / trinkets / potions",
+            text="Global / General binds",
             variable=self.global_binds,
             text_color=ctk_theme("text"),
             command=self.save_current_settings,
@@ -2098,6 +2103,34 @@ class App(ctk.CTk):
         }
         return numpad_labels.get(base, base)
 
+    def selected_numpad_scans(self) -> set[int]:
+        return self.selected_keys() & sync.NUMPAD_SCANS
+
+    def refresh_numlock_status(self) -> None:
+        if not hasattr(self, "numlock_status_label"):
+            return
+        state = read_num_lock_state()
+        selected = bool(self.selected_numpad_scans())
+        if state is True:
+            text = "NumLock status: ON"
+            color = ctk_theme("blue") if selected else ctk_theme("muted")
+        elif state is False:
+            text = "NumLock status: OFF — turn it ON before binding/testing NumPad keys"
+            color = ctk_theme("danger") if selected else ctk_theme("muted")
+        else:
+            text = "NumLock status: Unknown — check the keyboard toggle before binding/testing NumPad keys"
+            color = ctk_theme("danger") if selected else ctk_theme("muted")
+        self.numlock_status_label.configure(text=text, text_color=color)
+
+    def poll_numlock_status(self) -> None:
+        try:
+            if not self.winfo_exists():
+                return
+            self.refresh_numlock_status()
+            self.after(1000, self.poll_numlock_status)
+        except tk.TclError:
+            return
+
     def refresh_key_rule_labels(self) -> None:
         if not hasattr(self, "key_checkboxes"):
             return
@@ -2114,6 +2147,7 @@ class App(ctk.CTk):
                 state="normal" if enabled else "disabled",
                 text_color=ctk_theme("text") if enabled else ctk_theme("muted"),
             )
+        self.refresh_numlock_status()
 
     def _build_advanced_key_rules_card(self, card: ctk.CTkFrame) -> None:
         rules = ctk.CTkFrame(card, fg_color="transparent")
@@ -2274,12 +2308,32 @@ class App(ctk.CTk):
         ).pack(side="left", padx=(8, 0))
         ctk.CTkLabel(
             key_frame,
-            text="Numpad is optional because Num Lock and compact keyboards can behave differently.",
+            text=(
+                "Full keyboard? Click Enable Numpad. Num 5 is one physical key: with Num Lock on "
+                "loaders may say NUMPAD5; with Num Lock off they may say NUMPADCLEAR, CLEAR, "
+                "or NUMPADDCLE. Enable Num 5—there is no separate Clear key to select."
+            ),
             text_color=ctk_theme("muted"),
             anchor="w",
             justify="left",
             wraplength=520,
         ).grid(row=key_button_row + 2, column=0, columnspan=key_columns, sticky="ew", pady=(8, 0))
+        self.numlock_status_label = ctk.CTkLabel(
+            key_frame,
+            text="NumLock status: checking...",
+            text_color=ctk_theme("muted"),
+            anchor="w",
+            justify="left",
+            wraplength=520,
+        )
+        self.numlock_status_label.grid(
+            row=key_button_row + 3,
+            column=0,
+            columnspan=key_columns,
+            sticky="ew",
+            pady=(4, 0),
+        )
+        self.refresh_numlock_status()
 
     def _build_advanced_run_card(self, card: ctk.CTkFrame) -> None:
         ctk.CTkLabel(
@@ -2306,14 +2360,14 @@ class App(ctk.CTk):
         )
         ctk.CTkButton(
             button_row,
-            text="Remove Old Debounce Binds",
-            width=190,
+            text="Remove Old Binds",
+            width=160,
             height=34,
             corner_radius=8,
             fg_color=ctk_theme("danger_bg"),
             hover_color=ctk_theme("danger_hover"),
             text_color=ctk_theme("danger"),
-            command=self.remove_old_debounce_binds,
+            command=self.remove_old_binds,
         ).pack(side="left", padx=(8, 0))
         support_row = ctk.CTkFrame(card, fg_color="transparent")
         support_row.grid(row=3, column=0, columnspan=4, sticky="ew", padx=14, pady=(0, 14))
@@ -3152,27 +3206,26 @@ class App(ctk.CTk):
         if config_ok is None:
             config_ok = bool(config_raw) and Path(config_raw).exists()
         if not config_ok:
-            self.express_global_status.set("Load Config.ini to check global binds.")
+            self.express_global_status.set("Load Config.ini to check General actions.")
             self.express_global_missing.set("")
             self._set_status_label(self.express_global_status_label, False)
             return
         try:
             general_names = set(load_action_names(Path(config_raw), "General"))
         except Exception:
-            self.express_global_status.set("Could not read General global binds.")
+            self.express_global_status.set("Could not read Config.ini [General] actions.")
             self.express_global_missing.set("")
             self._set_status_label(self.express_global_status_label, False)
             return
 
-        present = [name for name in GLOBAL_ACTIONS if name in general_names]
-        missing = [name for name in GLOBAL_ACTIONS if name not in general_names]
-        self.express_global_status.set(f"Found in Config.ini: {len(present)}/{len(GLOBAL_ACTIONS)}")
-        if missing:
+        present = general_action_names(general_names)
+        self.express_global_status.set(f"Found in Config.ini [General]: {len(present)} actions")
+        if not present:
             self._set_status_label(self.express_global_status_label, False)
-            self.express_global_missing.set("Missing from General: " + ", ".join(missing))
+            self.express_global_missing.set("No actions were found in the General section.")
         else:
             self._set_status_label(self.express_global_status_label, True)
-            self.express_global_missing.set("All Express global binds are available.")
+            self.express_global_missing.set("All General actions are available for selection.")
 
     def _grid_hint(
         self,
@@ -3428,7 +3481,7 @@ class App(ctk.CTk):
             actions[section] = names - self.disabled_actions_by_section.get(section, set())
         if self.global_binds.get():
             names = {entry.name for entry in sections.get("General", [])}
-            actions["General"] = (names & set(GLOBAL_ACTIONS)) - self.disabled_actions_by_section.get("General", set())
+            actions["General"] = general_action_names(names) - self.disabled_actions_by_section.get("General", set())
         elif section == "General":
             names = {entry.name for entry in sections.get("General", [])}
             actions["General"] = names - self.disabled_actions_by_section.get("General", set())
@@ -3659,6 +3712,14 @@ class App(ctk.CTk):
             candidates = []
             self.add_preflight_item(items, "Reserved binds", "FAIL", str(exc), True)
 
+        numlock_status = num_lock_guidance(
+            bool(enabled_scans & sync.NUMPAD_SCANS),
+            read_num_lock_state(),
+        )
+        if numlock_status:
+            status, detail = numlock_status
+            self.add_preflight_item(items, "NumLock", status, detail)
+
         if config_ok and (section or multi_section):
             if multi_section:
                 active_actions: dict[str, set[str]] = {}
@@ -3669,7 +3730,7 @@ class App(ctk.CTk):
                         active_actions[run_section] = selected
                 if self.global_binds.get():
                     names = {entry.name for entry in sections.get("General", [])}
-                    selected = (names & set(GLOBAL_ACTIONS)) - self.disabled_actions_by_section.get("General", set())
+                    selected = general_action_names(names) - self.disabled_actions_by_section.get("General", set())
                     if selected:
                         active_actions["General"] = selected
             else:
@@ -3805,6 +3866,17 @@ class App(ctk.CTk):
             details = traceback.format_exc()
             self.write_log(f"{exc}\n\n{details}")
             messagebox.showerror("Check Setup", str(exc))
+
+    def confirm_numlock_for_apply(self) -> bool:
+        if not self.selected_numpad_scans() or read_num_lock_state() is not False:
+            return True
+        return messagebox.askyesno(
+            "NumLock is Off",
+            "NumPad keys are selected, but NumLock is currently OFF.\n\n"
+            "Turn NumLock ON in WoW before binding and testing so the keys display as NumPad numbers "
+            "instead of Page Down/Clear.\n\n"
+            "Continue with Apply anyway?",
+        )
 
     def backup_targets(self) -> list[Path]:
         raw_targets = [
@@ -4143,7 +4215,7 @@ class App(ctk.CTk):
             f"Multi-spec bind: {'on' if self.multi_section_binds.get() else 'off'}",
             f"Multi-spec selections: {len(self.selected_bind_sections)}",
             f"Keyboard layout: {self.current_layout().name}",
-            f"Global binds: {'on' if self.global_binds.get() else 'off'}",
+            f"General binds: {'on' if self.global_binds.get() else 'off'}",
             f"Replace loader hotkeys: {'on' if self.overwrite_ggl.get() else 'off'}",
             f"Randomized layout: {'on' if self.randomize.get() else 'off'}",
             f"Addon file exists: {'yes' if addon_path and addon_path.exists() else 'no'}",
@@ -4197,59 +4269,180 @@ class App(ctk.CTk):
             self.write_log(f"{exc}\n\n{details}")
             messagebox.showerror("Export Bug Report", str(exc))
 
-    def remove_old_debounce_binds(self) -> None:
+    def choose_cleanup_scope(self) -> str | None:
+        dialog = tk.Toplevel(self)
+        dialog.title("Remove Old Binds")
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+
+        scope = tk.StringVar(value="both")
+        result: dict[str, str | None] = {"scope": None}
+        body = ttk.Frame(dialog, padding=16)
+        body.grid(row=0, column=0, sticky="nsew")
+        ttk.Label(
+            body,
+            text="Choose what to clear for the selected class/spec target:",
+            style="Muted.TLabel",
+        ).grid(row=0, column=0, sticky="w", pady=(0, 8))
+        ttk.Radiobutton(body, text="Both Config.ini and Debounce", variable=scope, value="both").grid(
+            row=1, column=0, sticky="w", pady=2
+        )
+        ttk.Radiobutton(body, text="Config.ini only", variable=scope, value="config").grid(
+            row=2, column=0, sticky="w", pady=2
+        )
+        ttk.Radiobutton(body, text="Debounce only", variable=scope, value="debounce").grid(
+            row=3, column=0, sticky="w", pady=2
+        )
+        ttk.Label(
+            body,
+            text="Backups are created before any selected file is changed.",
+            style="Muted.TLabel",
+        ).grid(row=4, column=0, sticky="w", pady=(8, 12))
+
+        buttons = ttk.Frame(body)
+        buttons.grid(row=5, column=0, sticky="e")
+
+        def cancel() -> None:
+            result["scope"] = None
+            dialog.destroy()
+
+        def accept() -> None:
+            result["scope"] = scope.get()
+            dialog.destroy()
+
+        ttk.Button(buttons, text="Cancel", command=cancel).pack(side="right")
+        ttk.Button(buttons, text="Continue", command=accept).pack(side="right", padx=(0, 8))
+        dialog.protocol("WM_DELETE_WINDOW", cancel)
+        self._center_child_window(dialog)
+        self.wait_window(dialog)
+        return result["scope"]
+
+    def ensure_cleanup_targets_available(self, paths: list[Path], config_path: Path | None) -> None:
+        blockers = self.running_apply_blockers(config_path)
+        locked = [path.name for path in paths if file_has_exclusive_access_conflict(path)]
+        if blockers or locked:
+            details: list[str] = []
+            if blockers:
+                details.append("Close: " + ", ".join(blockers))
+            if locked:
+                details.append("Files currently in use: " + ", ".join(locked))
+            raise RuntimeError("Close WoW and the loader before removing old binds. " + "; ".join(details))
+
+    def remove_old_binds(self) -> None:
         try:
             section = self.section.get().strip()
             if not section:
                 raise RuntimeError("Choose a class/spec or General first.")
-            if self.macro_addon.get() == "BindPad":
-                raise RuntimeError("This cleanup button is only for Debounce. Choose Debounce first.")
-            addon_path = Path(self.debounce_path.get())
-            if not addon_path.exists():
-                raise RuntimeError("Choose a valid Debounce.lua path.")
-            addon_path = normalize_debounce_path(addon_path)
-            self.debounce_path.set(str(addon_path))
+            scope = self.choose_cleanup_scope()
+            if scope is None:
+                return
+
+            use_debounce = scope in {"debounce", "both"}
+            use_config = scope in {"config", "both"}
+            addon_path: Path | None = None
+            addon_text = ""
+            addon_encoding = "utf-8"
+            debounce_vars: dict[object, object] | None = None
+            debounce_removed = 0
+            if use_debounce:
+                if self.macro_addon.get() == "BindPad":
+                    raise RuntimeError("Debounce cleanup is unavailable while BindPad is selected.")
+                addon_path = Path(self.debounce_path.get())
+                if not addon_path.exists():
+                    raise RuntimeError("Choose a valid Debounce.lua path.")
+                addon_path = normalize_debounce_path(addon_path)
+                self.debounce_path.set(str(addon_path))
+                addon_text, addon_encoding, _newline = sync.read_text(addon_path)
+                debounce_vars = sync.parse_debounce_vars(addon_text)
+                class_file, spec_index = sync.section_to_debounce_target(section)
+                debounce_removed = sync.clear_debounce_target(debounce_vars, class_file, spec_index)
+
             config_raw = self.ggl_config.get().strip().strip('"')
             config_path = Path(config_raw) if config_raw else None
-            running = self.running_apply_blockers(config_path)
-            if running:
-                raise RuntimeError(
-                    "Close these before cleaning Debounce: "
-                    + ", ".join(running)
-                    + ". Then run cleanup again."
-                )
+            config_text = ""
+            config_encoding = "utf-8"
+            config_newline = "\n"
+            config_lines: list[str] = []
+            config_entries: list[sync.GglEntry] = []
+            config_removed = 0
+            if use_config:
+                if config_path is None or not config_path.exists():
+                    raise RuntimeError("Choose a valid Config.ini path.")
+                config_text, config_encoding, config_newline = sync.read_text(config_path)
+                sections, config_lines = sync.parse_ggl_entries(config_text)
+                if section not in sections:
+                    raise RuntimeError(f"Selected section is not in Config.ini: {section}")
+                config_entries = sections[section]
+                _cleared_lines, config_removed = sync.clear_ggl_entries(config_lines, config_entries)
 
             target = "General" if section == "General" else section
+            selected_paths = [path for path in (addon_path, config_path) if path is not None]
+            self.ensure_cleanup_targets_available(selected_paths, config_path)
+
+            scope_label = {
+                "debounce": "Debounce",
+                "config": "Config.ini",
+                "both": "Config.ini and Debounce",
+            }[scope]
             confirmed = messagebox.askyesno(
-                "Remove Old Debounce Binds",
-                "This will remove ALL Debounce entries in the selected target:\n\n"
+                "Remove Old Binds",
+                f"This will clear the selected {scope_label} binds in:\n\n"
                 f"{target}\n\n"
-                "A backup will be created first. Config.ini will not be changed.\n\n"
-                "After this, press Apply to rebuild the current binds.\n\n"
+                f"Debounce entries to remove: {debounce_removed}\n"
+                f"Config.ini values to clear: {config_removed}\n\n"
+                "Backups will be created before writing. WoW and the loader must be restarted or reloaded afterward.\n\n"
                 "Continue?",
             )
             if not confirmed:
                 return
 
-            text, encoding, _newline = sync.read_text(addon_path)
-            vars_table = sync.parse_debounce_vars(text)
-            class_file, spec_index = sync.section_to_debounce_target(section)
-            removed = sync.clear_debounce_target(vars_table, class_file, spec_index)
-            backup = sync.backup_file(addon_path)
-            sync.write_text(addon_path, "DebounceVars = " + sync.dump_lua(vars_table) + "\n", encoding)
-            self.write_log(
-                f"Removed {removed} Debounce entries from {target}.\n"
-                f"Backup: {backup}\n\n"
-                "Press Apply to rebuild the current binds."
-            )
+            # Repeat the process/file check immediately before creating backups and writing.
+            self.ensure_cleanup_targets_available(selected_paths, config_path)
+            originals: dict[Path, bytes] = {path: path.read_bytes() for path in selected_paths}
+            backups: list[Path] = []
+            changed_paths: list[Path] = []
+            try:
+                if use_debounce and debounce_vars is not None and addon_path is not None and debounce_removed:
+                    backups.append(sync.backup_file(addon_path))
+                    addon_output = "DebounceVars = " + sync.dump_lua(debounce_vars) + "\n"
+                    sync.write_text(addon_path, addon_output, addon_encoding)
+                    if sync.read_text(addon_path)[0] != addon_output:
+                        raise RuntimeError("Debounce verification failed after cleanup.")
+                    changed_paths.append(addon_path)
+
+                if use_config and config_removed and config_path is not None:
+                    backups.append(sync.backup_file(config_path))
+                    config_output = config_newline.join(
+                        sync.clear_ggl_entries(config_lines, config_entries)[0]
+                    ) + config_newline
+                    sync.write_text(config_path, config_output, config_encoding)
+                    if sync.read_text(config_path)[0] != config_output:
+                        raise RuntimeError("Config.ini verification failed after cleanup.")
+                    changed_paths.append(config_path)
+            except Exception:
+                for path, original in originals.items():
+                    if path in changed_paths or path.exists():
+                        try:
+                            sync.write_bytes_atomic(path, original)
+                        except Exception:
+                            pass
+                raise
+
+            details = [
+                f"Debounce: removed {debounce_removed} entries from {target}." if use_debounce else "Debounce: unchanged.",
+                f"Config.ini: cleared {config_removed} values in {target}." if use_config else "Config.ini: unchanged.",
+            ]
+            backup_text = "\n".join(f"Backup: {backup}" for backup in backups) if backups else "No changes were needed; no backup was created."
+            self.write_log("\n".join(details) + "\n" + backup_text + "\n\nRestart/reload WoW and the loader before applying new binds.")
             messagebox.showinfo(
-                "Remove Old Debounce Binds",
-                f"Removed {removed} Debounce entries from {target}. Press Apply to rebuild current binds.",
+                "Remove Old Binds",
+                "\n".join(details) + "\n\n" + backup_text,
             )
         except Exception as exc:
             details = traceback.format_exc()
             self.write_log(f"{exc}\n\n{details}")
-            messagebox.showerror("Remove Old Debounce Binds", str(exc))
+            messagebox.showerror("Remove Old Binds", str(exc))
 
     def _write_text_widget(self, widget: tk.Text, text: str) -> None:
         widget.configure(state="normal")
@@ -4471,6 +4664,9 @@ class App(ctk.CTk):
         if allowed_names is not None:
             names &= allowed_names
         return names - self.disabled_actions_by_section.get(section, set())
+
+    def general_cleanup_names(self, ggl_config: Path) -> set[str]:
+        return general_action_names(load_action_names(ggl_config, "General"))
 
     def playable_sections_for_current_config(self, macro_addon: str | None = None) -> list[str]:
         addon = macro_addon or ("BindPad" if self.macro_addon.get() == "BindPad" else "Debounce")
@@ -5140,6 +5336,9 @@ class App(ctk.CTk):
                 self.write_log(preflight_text)
                 messagebox.showerror("Preflight Check", "Fix the blocking preflight issues before continuing.")
                 return
+            if apply and not self.confirm_numlock_for_apply():
+                self.write_log(preflight_text + "\n\nApply canceled: NumLock is OFF while NumPad keys are selected.")
+                return
 
             multi_section = self.multi_section_binds.get()
             section = self.section.get().strip()
@@ -5211,11 +5410,8 @@ class App(ctk.CTk):
                     raise RuntimeError("Choose at least one class/spec in the multi-spec list.")
 
                 if self.global_binds.get():
-                    general_cleanup_names = set(GLOBAL_ACTIONS)
-                    general_action_names = self.selected_action_names_for_section(
-                        "General",
-                        set(GLOBAL_ACTIONS),
-                    )
+                    general_cleanup_names = self.general_cleanup_names(ggl_config)
+                    general_action_names = self.selected_action_names_for_section("General")
                     result, plans = run_once(
                         section="General",
                         action_names=general_action_names,
@@ -5301,11 +5497,8 @@ class App(ctk.CTk):
                     keys_from_prior_passes.update(plan.key for plan in plans if plan.key)
 
                 if self.global_binds.get():
-                    general_cleanup_names = set(GLOBAL_ACTIONS)
-                    general_action_names = self.selected_action_names_for_section(
-                        "General",
-                        set(GLOBAL_ACTIONS),
-                    )
+                    general_cleanup_names = self.general_cleanup_names(ggl_config)
+                    general_action_names = self.selected_action_names_for_section("General")
                     result, plans = run_once(
                         section="General",
                         action_names=general_action_names,

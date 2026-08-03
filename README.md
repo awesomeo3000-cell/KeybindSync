@@ -19,12 +19,16 @@ The app is built around a preview-first workflow:
 - Spell/action toggles per class/spec.
 - Custom macro CSV import and template export.
 - Custom pixel/macro overrides.
-- Optional global targeting, trinket, healthstone, and potion binds.
+- Optional Config.ini `[General]` binds, including targeting, stopcasting, trinkets, healthstone, potions, and other General actions.
+- General actions are discovered from the loaded Config.ini instead of a fixed action allowlist; NumPad 5 label variants are normalized when reading loader data.
+- NumPad guidance explains that NumPad 5 and the NumLock-off `CLEAR`/`NUMPADCLEAR` labels are the same physical key.
+- When NumPad keys are selected, preflight reports the current NumLock state and Apply asks for confirmation if NumLock is off.
 - Randomized bind layouts with repeatable seeds.
 - Modifier and key-pool controls, including numpad and function-key toggles.
 - Keyboard layout profiles, including US QWERTY, German QWERTZ, and International Safe.
 - Preview CSV reports before writes.
 - Backups before Apply and cleanup writes.
+- Scoped cleanup for the selected Config.ini section and/or Debounce target, with backups and post-write verification.
 - Renamed-loader detection based on the selected `Config.ini` folder, plus an optional explicit loader path.
 - File-in-use checks, post-write verification, and automatic rollback when an Apply fails.
 - Preflight setup checks.

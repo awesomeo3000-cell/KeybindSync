@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- The Advanced cleanup action can now clear old key assignments from the selected `Config.ini` section, the selected Debounce target, or both, with backups and verification.
+- General actions now match common loader spellings such as `Trinket 1`, `Health Stone`, and `Healing Potion`; observed `NUMPADDCLE`/`NUMPADCLE` labels are treated as NumPad 5.
+- General binds are now discovered dynamically from the Config.ini `[General]` section, including `StopCasting`, party focus actions, `Whipper Root Tuber`, and other user-defined entries.
+- Key Rules now explicitly explains the NumPad 5 / NumLock-off `CLEAR` label relationship and the Enable Numpad action.
+- NumPad selections now show live NumLock guidance; Apply requests confirmation when NumLock is off instead of silently proceeding.
+
 ## 1.3.2
 
 - Detects any running executable launched from the selected `Config.ini` folder, so renamed loader executables are blocked before Apply.
