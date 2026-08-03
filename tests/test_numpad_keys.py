@@ -41,10 +41,10 @@ class NumpadKeyTests(unittest.TestCase):
         self.assertEqual(key.scan_code, 0x11C)
         self.assertEqual(key.ggl("123"), "sc11C_123")
 
-    def test_alt_numpad_digits_are_not_generated(self) -> None:
+    def test_alt_and_shift_numpad_digits_are_not_generated(self) -> None:
         candidates = sync.key_candidates(
             enabled_scans={sync.SCAN_CODES["NUMPAD1"]},
-            enabled_mods={"ALT", "CTRL"},
+            enabled_mods={"ALT", "CTRL", "SHIFT"},
             allow_unmodified=False,
         )
         self.assertEqual([key.mods for key in candidates], [("CTRL",)])
