@@ -339,6 +339,9 @@ def normalize_key_label(label: str) -> str:
         "NUM.": "NUMPADDECIMAL",
         # NumLock-off labels that DirectInput / WoW Debounde may use
         "NUMPADCLEAR": "NUMPAD5",
+        # Observed loader typo for the same physical NumLock-off key.
+        "NUMPADDCLE": "NUMPAD5",
+        "NUMPADCLE": "NUMPAD5",
         "CLEAR": "NUMPAD5",
         "NUMPADEND": "NUMPAD1",
         "NUMPADDOWN": "NUMPAD2",
@@ -1032,6 +1035,27 @@ def rewrite_ggl_lines(
             continue
         updated[entry.line_index] = set_ggl_line_value(updated[entry.line_index], plan.ggl_token)
     return updated
+
+
+def clear_ggl_entries(lines: list[str], entries: list[GglEntry]) -> tuple[list[str], int]:
+    """Clear key values for the supplied Config.ini entries.
+
+    Comments and action names remain intact so the loader can continue to
+    recognize the section while its old key assignments are removed.
+    """
+    updated = list(lines)
+    changed = 0
+    seen_lines: set[int] = set()
+    for entry in entries:
+        line_index = entry.line_index
+        if line_index in seen_lines or not 0 <= line_index < len(updated):
+            continue
+        seen_lines.add(line_index)
+        rewritten = set_ggl_line_value(updated[line_index], "")
+        if rewritten != updated[line_index]:
+            changed += 1
+            updated[line_index] = rewritten
+    return updated, changed
 
 
 def ggl_token_to_key(token: str) -> tuple[KeyBind | None, str | None]:
