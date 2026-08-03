@@ -1,0 +1,157 @@
+--- a/src/wow_keybind_app.py
++++ b/src/wow_keybind_app.py
+@@ -47,6 +47,28 @@
+     "Focus Arena4",
+     "Focus Arena5",
+ ]
++
++def canonical_global_action_name(name: str) -> str | None:
++    """Return the app's global-action name for common loader spellings."""
++    token = re.sub(r"[^a-z0-9]+", "", str(name).lower())
++    aliases = {
++        "trinket01": "Trinket1",
++        "trinketone": "Trinket1",
++        "trinket02": "Trinket2",
++        "trinkettwo": "Trinket2",
++    }
++    if token in aliases:
++        return aliases[token]
++    for action in GLOBAL_ACTIONS:
++        if re.sub(r"[^a-z0-9]+", "", action.lower()) == token:
++            return action
++    return None
++
++
++def global_action_names(names: set[str] | list[str]) -> set[str]:
++    """Keep original Config.ini spellings for matched global actions."""
++    return {name for name in names if canonical_global_action_name(name) in GLOBAL_ACTIONS}
++
+ 
+ GLOBAL_CUSTOM_TARGETING_ACTIONS = {
+     "TargetMouseOver",
+@@ -3164,8 +3186,9 @@
+             self._set_status_label(self.express_global_status_label, False)
+             return
+ 
+-        present = [name for name in GLOBAL_ACTIONS if name in general_names]
+-        missing = [name for name in GLOBAL_ACTIONS if name not in general_names]
++        present_names = {canonical_global_action_name(name) for name in general_names}
++        present = [name for name in GLOBAL_ACTIONS if name in present_names]
++        missing = [name for name in GLOBAL_ACTIONS if name not in present_names]
+         self.express_global_status.set(f"Found in Config.ini: {len(present)}/{len(GLOBAL_ACTIONS)}")
+         if missing:
+             self._set_status_label(self.express_global_status_label, False)
+@@ -3428,7 +3451,7 @@
+             actions[section] = names - self.disabled_actions_by_section.get(section, set())
+         if self.global_binds.get():
+             names = {entry.name for entry in sections.get("General", [])}
+-            actions["General"] = (names & set(GLOBAL_ACTIONS)) - self.disabled_actions_by_section.get("General", set())
++            actions["General"] = global_action_names(names) - self.disabled_actions_by_section.get("General", set())
+         elif section == "General":
+             names = {entry.name for entry in sections.get("General", [])}
+             actions["General"] = names - self.disabled_actions_by_section.get("General", set())
+@@ -3669,7 +3692,7 @@
+                         active_actions[run_section] = selected
+                 if self.global_binds.get():
+                     names = {entry.name for entry in sections.get("General", [])}
+-                    selected = (names & set(GLOBAL_ACTIONS)) - self.disabled_actions_by_section.get("General", set())
++                    selected = global_action_names(names) - self.disabled_actions_by_section.get("General", set())
+                     if selected:
+                         active_actions["General"] = selected
+             else:
+@@ -4590,8 +4613,17 @@
+         else:
+             names = set(load_action_names(ggl_config, section))
+         if allowed_names is not None:
+-            names &= allowed_names
++            if section == "General":
++                names = {
++                    name for name in names
++                    if canonical_global_action_name(name) in allowed_names
++                }
++            else:
++                names &= allowed_names
+         return names - self.disabled_actions_by_section.get(section, set())
++
++    def general_cleanup_names(self, ggl_config: Path) -> set[str]:
++        return global_action_names(load_action_names(ggl_config, "General"))
+ 
+     def playable_sections_for_current_config(self, macro_addon: str | None = None) -> list[str]:
+         addon = macro_addon or ("BindPad" if self.macro_addon.get() == "BindPad" else "Debounce")
+@@ -5332,7 +5364,7 @@
+                     raise RuntimeError("Choose at least one class/spec in the multi-spec list.")
+ 
+                 if self.global_binds.get():
+-                    general_cleanup_names = set(GLOBAL_ACTIONS)
++                    general_cleanup_names = self.general_cleanup_names(ggl_config)
+                     general_action_names = self.selected_action_names_for_section(
+                         "General",
+                         set(GLOBAL_ACTIONS),
+@@ -5422,7 +5454,7 @@
+                     keys_from_prior_passes.update(plan.key for plan in plans if plan.key)
+ 
+                 if self.global_binds.get():
+-                    general_cleanup_names = set(GLOBAL_ACTIONS)
++                    general_cleanup_names = self.general_cleanup_names(ggl_config)
+                     general_action_names = self.selected_action_names_for_section(
+                         "General",
+                         set(GLOBAL_ACTIONS),
+--- a/src/wow_keybind_sync.py
++++ b/src/wow_keybind_sync.py
+@@ -339,6 +339,9 @@
+         "NUM.": "NUMPADDECIMAL",
+         # NumLock-off labels that DirectInput / WoW Debounde may use
+         "NUMPADCLEAR": "NUMPAD5",
++        # Observed loader typo for the same physical NumLock-off key.
++        "NUMPADDCLE": "NUMPAD5",
++        "NUMPADCLE": "NUMPAD5",
+         "CLEAR": "NUMPAD5",
+         "NUMPADEND": "NUMPAD1",
+         "NUMPADDOWN": "NUMPAD2",
+--- a/tests/test_cleanup.py
++++ b/tests/test_cleanup.py
+@@ -9,9 +9,24 @@
+ sys.path.insert(0, str(ROOT / "src"))
+ 
+ import wow_keybind_sync as sync
++import wow_keybind_app as app
+ 
+ 
+ class CleanupTests(unittest.TestCase):
++    def test_loader_numpad_clear_aliases_map_to_numpad5(self) -> None:
++        for label in ("NUMPADCLEAR", "NUMPADDCLE", "NUMPADCLE"):
++            with self.subTest(label=label):
++                self.assertEqual(sync.parse_keybind_label(label).scan_code, sync.SCAN_CODES["NUMPAD5"])
++
++    def test_global_action_aliases_keep_config_names(self) -> None:
++        names = {"Trinket 1", "Trinket02", "Health Stone", "Healing Potion"}
++
++        self.assertEqual(
++            app.global_action_names(names),
++            {"Trinket 1", "Trinket02", "Health Stone", "Healing Potion"},
++        )
++        self.assertEqual(app.canonical_global_action_name("Trinket02"), "Trinket2")
++
+     def test_clear_ggl_entries_preserves_names_and_comments(self) -> None:
+         text = """[General]\nTargetEnemy=^sc1E_123 ; keep comment\nStartAttack=\n\n[Warrior - Fury]\nCharge=sc20_123\n"""
+         sections, lines = sync.parse_ggl_entries(text)
+--- a/README.md
++++ b/README.md
+@@ -20,6 +20,7 @@
+ - Custom macro CSV import and template export.
+ - Custom pixel/macro overrides.
+ - Optional global targeting, trinket, healthstone, and potion binds.
++- Common spacing/label variants for trinkets, healthstone, healing potion, and NumPad 5 are normalized when reading loader data.
+ - Randomized bind layouts with repeatable seeds.
+ - Modifier and key-pool controls, including numpad and function-key toggles.
+ - Keyboard layout profiles, including US QWERTY, German QWERTZ, and International Safe.
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -3,6 +3,7 @@
+ ## Unreleased
+ 
+ - The Advanced cleanup action can now clear old key assignments from the selected `Config.ini` section, the selected Debounce target, or both, with backups and verification.
++- General actions now match common loader spellings such as `Trinket 1`, `Health Stone`, and `Healing Potion`; observed `NUMPADDCLE`/`NUMPADCLE` labels are treated as NumPad 5.
+ 
+ ## 1.3.2
+ 

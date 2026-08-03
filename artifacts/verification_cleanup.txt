@@ -1,0 +1,71 @@
+WoWKeybindSync cleanup verification record
+Date: 2026-08-03
+Workspace: E:\WoWKeybindSync\Repo
+Baseline commit: daf1a9b79e23abc8052e97327e044fce391d9f18
+
+ROLE 1 - BASELINE PRESERVATION
+Input files:
+  src\wow_keybind_app.py
+  src\wow_keybind_sync.py
+  tests\test_numpad_keys.py
+  tests\test_process_safety.py
+Command:
+  Get-FileHash src\wow_keybind_app.py,src\wow_keybind_sync.py,tests\test_numpad_keys.py,tests\test_process_safety.py -Algorithm SHA256 | Format-Table -AutoSize
+Literal output:
+  wow_keybind_app.py    ECB07772FF5470D473B3DD00CCF79EA2780B390CFE5EB7E03BE0E59106377754
+  wow_keybind_sync.py   4C4150543CF5C5DD6249D8C10B78CE6981DB64A3D438BE1F7C122BE8A025F0FF
+  test_numpad_keys.py   1FB3753DCBEBB09D7C525AA1B9DBD55807C154CA05AAD4CE2B67658745D34F4F
+  test_process_safety.py 3A73CE0CCC87841665CC6C4060F510E3FA271373714D5C75C9EB24B222E63D98
+Exit status: 0
+Preserved originals: artifacts\cleanup-baseline-20260803\
+
+ROLE 2 - MODIFIED ARTIFACTS
+Inputs:
+  Selected Config.ini section, selected Debounce target, cleanup scope = Both by default.
+  Config.ini key values are cleared while names/comments remain.
+  Debounce selected target is emptied; other specs and General remain unchanged.
+Command:
+  python -m compileall -q src tests
+Literal output: [no output]
+Exit status: 0
+Command:
+  python -m unittest discover -s tests -v
+Literal output:
+  Ran 15 tests in 0.024s
+  OK
+Exit status: 0
+Command:
+  Start-Process -FilePath .\artifacts\cleanup-modified-20260803\dist\WoWKeyBindSync.exe -ArgumentList '--self-test' -WindowStyle Hidden -Wait -PassThru
+Literal output:
+  exe_self_test_exit=0
+Exit status: 0
+Modified source/test/docs snapshot: artifacts\cleanup-modified-20260803\
+Modified executable:
+  artifacts\cleanup-modified-20260803\dist\WoWKeyBindSync.exe
+  SHA256 FA4DA72C6F3A9A541EC8F5BB849024546B1E3F4207EF9A6A8C2BD62F6B2CD45D
+
+ROLE 3 - PATCH/DIFF
+Command:
+  git apply --check --reverse --exclude=tests/test_cleanup.py artifacts\cleanup-both.patch
+Literal output:
+  tracked_reverse_patch_exit=0
+Exit status: 0
+Patch artifact:
+  artifacts\cleanup-both.patch
+  SHA256 03D8E757AB525864FD0DD5C4CD6CC5F7613C19706CDFF7245C41D88E62F88F4E
+Note: the new untracked test is included in the patch; reverse checking excludes it because it is not tracked in the baseline index.
+
+ROLE 4 - ROLLBACK
+Command:
+  .\artifacts\rollback_cleanup.ps1 -RepoRoot .\artifacts\rollback-test-20260803
+Literal output:
+  RESTORED README.md SHA256=61EB43B698930E3E5D23E34F9B716A212DB5C671ED961F5093F3BF6F25C3499B
+  RESTORED CHANGELOG.md SHA256=29EF0C782FA98551E18801606D5FB0F3B4D3A81BBA3703FF14A461FCED9111B0
+  RESTORED src\wow_keybind_app.py SHA256=ECB07772FF5470D473B3DD00CCF79EA2780B390CFE5EB7E03BE0E59106377754
+  RESTORED src\wow_keybind_sync.py SHA256=4C4150543CF5C5DD6249D8C10B78CE6981DB64A3D438BE1F7C122BE8A025F0FF
+  RESTORED tests\test_numpad_keys.py SHA256=1FB3753DCBEBB09D7C525AA1B9DBD55807C154CA05AAD4CE2B67658745D34F4F
+  RESTORED tests\test_process_safety.py SHA256=3A73CE0CCC87841665CC6C4060F510E3FA271373714D5C75C9EB24B222E63D98
+  REMOVED tests\test_cleanup.py
+  Rollback verified for E:\WoWKeybindSync\Repo\artifacts\rollback-test-20260803
+Exit status: 0
+Rollback script: artifacts\rollback_cleanup.ps1

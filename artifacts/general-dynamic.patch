@@ -1,0 +1,247 @@
+--- a/src/wow_keybind_app.py
++++ b/src/wow_keybind_app.py
+@@ -27,47 +27,9 @@
+ APP_VERSION = "1.3.2"
+ 
+ 
+-GLOBAL_ACTIONS = [
+-    "TargetMouseOver",
+-    "TargetEnemy",
+-    "TargetLastTarget",
+-    "StartAttack",
+-    "Trinket1",
+-    "Trinket2",
+-    "HealthStone",
+-    "HealingPotion",
+-    "Target Arena1",
+-    "Target Arena2",
+-    "Target Arena3",
+-    "Target Arena4",
+-    "Target Arena5",
+-    "Focus Arena1",
+-    "Focus Arena2",
+-    "Focus Arena3",
+-    "Focus Arena4",
+-    "Focus Arena5",
+-]
+-
+-def canonical_global_action_name(name: str) -> str | None:
+-    """Return the app's global-action name for common loader spellings."""
+-    token = re.sub(r"[^a-z0-9]+", "", str(name).lower())
+-    aliases = {
+-        "trinket01": "Trinket1",
+-        "trinketone": "Trinket1",
+-        "trinket02": "Trinket2",
+-        "trinkettwo": "Trinket2",
+-    }
+-    if token in aliases:
+-        return aliases[token]
+-    for action in GLOBAL_ACTIONS:
+-        if re.sub(r"[^a-z0-9]+", "", action.lower()) == token:
+-            return action
+-    return None
+-
+-
+-def global_action_names(names: set[str] | list[str]) -> set[str]:
+-    """Keep original Config.ini spellings for matched global actions."""
+-    return {name for name in names if canonical_global_action_name(name) in GLOBAL_ACTIONS}
++def general_action_names(names: set[str] | list[str]) -> set[str]:
++    """Return every non-empty action name discovered in Config.ini [General]."""
++    return {str(name).strip() for name in names if str(name).strip()}
+ 
+ 
+ GLOBAL_CUSTOM_TARGETING_ACTIONS = {
+@@ -112,14 +74,10 @@
+     },
+ ]
+ 
+-GLOBAL_BIND_DISPLAY_GROUPS = [
++GENERAL_BIND_DISPLAY_GROUPS = [
+     (
+-        "Targeting",
+-        "Mouseover, enemy, last target, target arena 1-5, focus arena 1-5",
+-    ),
+-    (
+-        "Utility",
+-        "Start attack, trinket 1/2, healthstone, healing potion",
++        "General actions",
++        "Every non-empty action in the Config.ini [General] section is available.",
+     ),
+ ]
+ 
+@@ -1113,7 +1071,7 @@
+         self.express_profile_status = tk.StringVar(value="")
+         self.express_section_status = tk.StringVar(value="Choose class/spec")
+         self.express_ready_status = tk.StringVar(value="Choose files to begin.")
+-        self.express_global_status = tk.StringVar(value="Load Config.ini to check global binds.")
++        self.express_global_status = tk.StringVar(value="Load Config.ini to check General actions.")
+         self.express_global_missing = tk.StringVar(value="")
+         self.express_custom_status = tk.StringVar(value="No custom macros imported.")
+         self.advanced_section_filter.trace_add("write", lambda *_args: self.refresh_advanced_section_picker())
+@@ -1808,7 +1766,7 @@
+         option_row.grid(row=3, column=0, columnspan=3, sticky="ew", padx=14, pady=(2, 0))
+         ctk.CTkCheckBox(
+             option_row,
+-            text="Global targeting / trinkets / potions",
++            text="Global / General binds",
+             variable=self.global_binds,
+             text_color=ctk_theme("text"),
+             command=self.save_current_settings,
+@@ -3174,28 +3132,26 @@
+         if config_ok is None:
+             config_ok = bool(config_raw) and Path(config_raw).exists()
+         if not config_ok:
+-            self.express_global_status.set("Load Config.ini to check global binds.")
++            self.express_global_status.set("Load Config.ini to check General actions.")
+             self.express_global_missing.set("")
+             self._set_status_label(self.express_global_status_label, False)
+             return
+         try:
+             general_names = set(load_action_names(Path(config_raw), "General"))
+         except Exception:
+-            self.express_global_status.set("Could not read General global binds.")
++            self.express_global_status.set("Could not read Config.ini [General] actions.")
+             self.express_global_missing.set("")
+             self._set_status_label(self.express_global_status_label, False)
+             return
+ 
+-        present_names = {canonical_global_action_name(name) for name in general_names}
+-        present = [name for name in GLOBAL_ACTIONS if name in present_names]
+-        missing = [name for name in GLOBAL_ACTIONS if name not in present_names]
+-        self.express_global_status.set(f"Found in Config.ini: {len(present)}/{len(GLOBAL_ACTIONS)}")
+-        if missing:
++        present = general_action_names(general_names)
++        self.express_global_status.set(f"Found in Config.ini [General]: {len(present)} actions")
++        if not present:
+             self._set_status_label(self.express_global_status_label, False)
+-            self.express_global_missing.set("Missing from General: " + ", ".join(missing))
++            self.express_global_missing.set("No actions were found in the General section.")
+         else:
+             self._set_status_label(self.express_global_status_label, True)
+-            self.express_global_missing.set("All Express global binds are available.")
++            self.express_global_missing.set("All General actions are available for selection.")
+ 
+     def _grid_hint(
+         self,
+@@ -3451,7 +3407,7 @@
+             actions[section] = names - self.disabled_actions_by_section.get(section, set())
+         if self.global_binds.get():
+             names = {entry.name for entry in sections.get("General", [])}
+-            actions["General"] = global_action_names(names) - self.disabled_actions_by_section.get("General", set())
++            actions["General"] = general_action_names(names) - self.disabled_actions_by_section.get("General", set())
+         elif section == "General":
+             names = {entry.name for entry in sections.get("General", [])}
+             actions["General"] = names - self.disabled_actions_by_section.get("General", set())
+@@ -3692,7 +3648,7 @@
+                         active_actions[run_section] = selected
+                 if self.global_binds.get():
+                     names = {entry.name for entry in sections.get("General", [])}
+-                    selected = global_action_names(names) - self.disabled_actions_by_section.get("General", set())
++                    selected = general_action_names(names) - self.disabled_actions_by_section.get("General", set())
+                     if selected:
+                         active_actions["General"] = selected
+             else:
+@@ -4166,7 +4122,7 @@
+             f"Multi-spec bind: {'on' if self.multi_section_binds.get() else 'off'}",
+             f"Multi-spec selections: {len(self.selected_bind_sections)}",
+             f"Keyboard layout: {self.current_layout().name}",
+-            f"Global binds: {'on' if self.global_binds.get() else 'off'}",
++            f"General binds: {'on' if self.global_binds.get() else 'off'}",
+             f"Replace loader hotkeys: {'on' if self.overwrite_ggl.get() else 'off'}",
+             f"Randomized layout: {'on' if self.randomize.get() else 'off'}",
+             f"Addon file exists: {'yes' if addon_path and addon_path.exists() else 'no'}",
+@@ -4613,17 +4569,11 @@
+         else:
+             names = set(load_action_names(ggl_config, section))
+         if allowed_names is not None:
+-            if section == "General":
+-                names = {
+-                    name for name in names
+-                    if canonical_global_action_name(name) in allowed_names
+-                }
+-            else:
+-                names &= allowed_names
++            names &= allowed_names
+         return names - self.disabled_actions_by_section.get(section, set())
+ 
+     def general_cleanup_names(self, ggl_config: Path) -> set[str]:
+-        return global_action_names(load_action_names(ggl_config, "General"))
++        return general_action_names(load_action_names(ggl_config, "General"))
+ 
+     def playable_sections_for_current_config(self, macro_addon: str | None = None) -> list[str]:
+         addon = macro_addon or ("BindPad" if self.macro_addon.get() == "BindPad" else "Debounce")
+@@ -5365,10 +5315,7 @@
+ 
+                 if self.global_binds.get():
+                     general_cleanup_names = self.general_cleanup_names(ggl_config)
+-                    general_action_names = self.selected_action_names_for_section(
+-                        "General",
+-                        set(GLOBAL_ACTIONS),
+-                    )
++                    general_action_names = self.selected_action_names_for_section("General")
+                     result, plans = run_once(
+                         section="General",
+                         action_names=general_action_names,
+@@ -5455,10 +5402,7 @@
+ 
+                 if self.global_binds.get():
+                     general_cleanup_names = self.general_cleanup_names(ggl_config)
+-                    general_action_names = self.selected_action_names_for_section(
+-                        "General",
+-                        set(GLOBAL_ACTIONS),
+-                    )
++                    general_action_names = self.selected_action_names_for_section("General")
+                     result, plans = run_once(
+                         section="General",
+                         action_names=general_action_names,
+--- a/tests/test_cleanup.py
++++ b/tests/test_cleanup.py
+@@ -18,14 +18,20 @@
+             with self.subTest(label=label):
+                 self.assertEqual(sync.parse_keybind_label(label).scan_code, sync.SCAN_CODES["NUMPAD5"])
+ 
+-    def test_global_action_aliases_keep_config_names(self) -> None:
+-        names = {"Trinket 1", "Trinket02", "Health Stone", "Healing Potion"}
++    def test_general_actions_are_dynamic_and_keep_config_names(self) -> None:
++        names = {
++            "Focus Party1",
++            "StopCasting",
++            "Trinket 1",
++            "Health Stone",
++            "SBA",
++            "",
++        }
+ 
+         self.assertEqual(
+-            app.global_action_names(names),
+-            {"Trinket 1", "Trinket02", "Health Stone", "Healing Potion"},
++            app.general_action_names(names),
++            {"Focus Party1", "StopCasting", "Trinket 1", "Health Stone", "SBA"},
+         )
+-        self.assertEqual(app.canonical_global_action_name("Trinket02"), "Trinket2")
+ 
+     def test_clear_ggl_entries_preserves_names_and_comments(self) -> None:
+         text = """[General]\nTargetEnemy=^sc1E_123 ; keep comment\nStartAttack=\n\n[Warrior - Fury]\nCharge=sc20_123\n"""
+--- a/README.md
++++ b/README.md
+@@ -19,8 +19,8 @@
+ - Spell/action toggles per class/spec.
+ - Custom macro CSV import and template export.
+ - Custom pixel/macro overrides.
+-- Optional global targeting, trinket, healthstone, and potion binds.
+-- Common spacing/label variants for trinkets, healthstone, healing potion, and NumPad 5 are normalized when reading loader data.
++- Optional Config.ini `[General]` binds, including targeting, stopcasting, trinkets, healthstone, potions, and other General actions.
++- General actions are discovered from the loaded Config.ini instead of a fixed action allowlist; NumPad 5 label variants are normalized when reading loader data.
+ - Randomized bind layouts with repeatable seeds.
+ - Modifier and key-pool controls, including numpad and function-key toggles.
+ - Keyboard layout profiles, including US QWERTY, German QWERTZ, and International Safe.
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -4,6 +4,7 @@
+ 
+ - The Advanced cleanup action can now clear old key assignments from the selected `Config.ini` section, the selected Debounce target, or both, with backups and verification.
+ - General actions now match common loader spellings such as `Trinket 1`, `Health Stone`, and `Healing Potion`; observed `NUMPADDCLE`/`NUMPADCLE` labels are treated as NumPad 5.
++- General binds are now discovered dynamically from the Config.ini `[General]` section, including `StopCasting`, party focus actions, `Whipper Root Tuber`, and other user-defined entries.
+ 
+ ## 1.3.2
+ 

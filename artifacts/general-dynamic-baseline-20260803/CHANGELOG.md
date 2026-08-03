@@ -1,0 +1,67 @@
+# Changelog
+
+## Unreleased
+
+- The Advanced cleanup action can now clear old key assignments from the selected `Config.ini` section, the selected Debounce target, or both, with backups and verification.
+- General actions now match common loader spellings such as `Trinket 1`, `Health Stone`, and `Healing Potion`; observed `NUMPADDCLE`/`NUMPADCLE` labels are treated as NumPad 5.
+
+## 1.3.2
+
+- Detects any running executable launched from the selected `Config.ini` folder, so renamed loader executables are blocked before Apply.
+- Added an optional Advanced `Loader exe` path for setups where the executable is stored outside the `Config.ini` folder.
+- Added exclusive-access checks for the addon file and `Config.ini`, with a second process/file check immediately before each write.
+- Added post-write verification and whole-run rollback so a failed Apply does not leave the addon and loader files out of sync.
+- Fixed reserved-bind parsing for `NUM+`, `NUM-`, and modifier variants such as `CTRL+NUM+`.
+- Stopped generating `Alt` + numpad digit binds because Windows may consume them as character-entry sequences.
+- Added automated process-safety and numpad regression tests to local builds and GitHub Actions.
+
+## 1.3.1
+
+- Added NumLock-off key aliases: NUMPADCLEAR, NUMPADPAGEDOWN, NUMPADEND, NUMPADHOME, NUMPADINSERT, NUMPADDELETE, and all arrow/PageUp variants now resolve to their NumLock-on counterparts.
+- Added missing NUMPADENTER key (scan 0x11C) to SCAN_CODES, candidate lists, and display labels.
+- Fixed mismatched binds caused by addon keys stored with NumLock-off labels being unparsable.
+
+## 1.3.0
+
+- Added Advanced Batch Specs mode for selecting multiple Debounce-supported class/spec sections.
+- Added a dedicated Batch Specs workflow with searchable checkbox rows, Select Visible, and Clear controls.
+- Batch Specs mode now hides the single-spec spell/action editor while batch mode is active.
+- Batch runs use saved per-spec spell/action toggles and process General global binds once.
+- Fixed Result window scrolling so mousewheel movement inside the result text no longer scrolls the whole app.
+- Cleaned stale BindPad managed macros across all character-specific tabs before writing new binds.
+- Added cleanup for older `GGL: ` BindPad macro names.
+- Added a preflight warning when active loader actions would create duplicate addon macro names.
+- Fixed BindPad support for non-retail sections like `TBC Paladin`.
+
+## 1.2.5
+
+- Added preflight setup checks.
+- Added Backup Manager.
+- Added redacted support bundle export.
+- Added keyboard layout support work in progress.
+- Added Disable Selected and Disable All controls to Spell / Loader Actions.
+- Preserved Spell / Loader Actions scroll position after toggling actions.
+
+## 1.2.4
+
+- Fixed the GitHub release workflow permission so tagged releases can publish the Windows `.exe`.
+
+## 1.2.3
+
+- Added AI instruction rows to the custom macro CSV template.
+- Custom macro CSV import now ignores template instruction rows beginning with `#`.
+- Added a Death Knight Unholy custom macro example CSV.
+
+## 1.2.1
+
+- Improved theme switching performance.
+- Preloaded Advanced shortly after Express opens.
+- Kept disabled custom macro row coloring consistent after refreshes and theme swaps.
+
+## 1.2.0
+
+- Added custom macro CSV import.
+- Added Save Template for custom macro CSV format.
+- Added custom macro support to Express setup.
+- Added searchable, scrollable Advanced class/spec picker.
+- Cleaned up the Advanced tab layout.

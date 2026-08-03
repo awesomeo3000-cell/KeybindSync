@@ -1,0 +1,14 @@
+﻿WoWKeyBindSync dynamic General-action verification
+timestamp=2026-08-03T09:08:39.6134192-04:00
+baseline=artifacts/general-dynamic-baseline-20260803
+modified=artifacts/general-dynamic-modified-20260803
+patch_sha256=0F6098C51511E6B5E533752BFC141AB66696D19827A79C9E15F7A53009B35936
+exe_sha256=87360158CE3FB3D4250E2BAAA40DA3004DE9C9A123250DF0CE20EFB786F61B0F
+commands_and_results:
+  python -m compileall -q src tests => exit 0
+  python -m unittest discover -s tests -v => exit 0; Ran 17 tests; OK
+  git diff --check => exit 0 (CRLF warnings only)
+  Config.ini parser => exit 0; General entries=26; StopCasting present=True
+  packaged EXE self-test => exit 0
+  git apply --check --reverse --exclude=tests/test_cleanup.py artifacts/general-dynamic.patch => exit 0
+  rollback_general_dynamic.ps1 staging test => exit 0; five-file hash comparison passed

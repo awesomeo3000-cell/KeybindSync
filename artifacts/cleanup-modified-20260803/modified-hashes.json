@@ -1,0 +1,32 @@
+﻿[
+    {
+        "RelativePath":  "README.md",
+        "Hash":  "7A5170B54E037F79663C2C8365A04CF57495AD3E3D67D79D672B64303ADEF976",
+        "Length":  2658
+    },
+    {
+        "RelativePath":  "CHANGELOG.md",
+        "Hash":  "6235AEE274534A29976F0B821682BC9B6790AD11CDAB425AFD1D438818869D66",
+        "Length":  3376
+    },
+    {
+        "RelativePath":  "src\\wow_keybind_app.py",
+        "Hash":  "E0EFF83A7E0A8C4029C37079727BA8C7CDDEFC5661AB9EB9C9BDB53718C8ADC7",
+        "Length":  239798
+    },
+    {
+        "RelativePath":  "src\\wow_keybind_sync.py",
+        "Hash":  "CCD253ADAB95FC57F711EDB1942CF55DCC4CCCD015F9FFDCE9A5CFF3D0A84953",
+        "Length":  72297
+    },
+    {
+        "RelativePath":  "tests\\test_cleanup.py",
+        "Hash":  "98ED5DDFF879C36BF814F4D83C21A98D241068E9B51D8894EF167D8D65D5FAF6",
+        "Length":  1983
+    },
+    {
+        "RelativePath":  "dist\\WoWKeyBindSync.exe",
+        "Hash":  "FA4DA72C6F3A9A541EC8F5BB849024546B1E3F4207EF9A6A8C2BD62F6B2CD45D",
+        "Length":  13343431
+    }
+]

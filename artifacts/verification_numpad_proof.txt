@@ -1,0 +1,13 @@
+﻿Numpad clarity verification record
+timestamp=2026-08-03T10:59:06.3684067-04:00
+baseline=artifacts/numpad-proof-baseline-20260803
+modified=artifacts/numpad-proof-modified-20260803
+patch_sha256=4E9F02D0BC3161A85B7DD7B2FE23649BD40CBBAD53C71C834DE8535E2360387F
+exe_sha256=C5BFC315A611A826EC202443DD7EF210FF16A108A4B2D6230324177D1000E925
+  python -m compileall -q src tests => exit 0
+  python -m unittest discover -s tests -v => exit 0; Ran 17 tests; OK
+  git diff --check => exit 0 (CRLF warnings only)
+  alias display/output check => exit 0; NUMPAD5, NUMPADCLEAR, CLEAR, NUMPADDCLE, NUMPADCLE all resolve to scan 0x4C and canonical output NUMPAD5
+  packaged EXE self-test => exit 0
+  git apply --check --reverse --exclude=tests/test_cleanup.py artifacts/numpad-proof.patch => exit 0
+  rollback_numpad_proof.ps1 staging test => exit 0; five-file hash comparison passed

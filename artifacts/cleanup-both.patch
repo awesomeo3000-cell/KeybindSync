@@ -1,0 +1,355 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index c0ed17c..1f77c8c 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -2,6 +2,8 @@
+ 
+ ## Unreleased
+ 
++- The Advanced cleanup action can now clear old key assignments from the selected `Config.ini` section, the selected Debounce target, or both, with backups and verification.
++
+ ## 1.3.2
+ 
+ - Detects any running executable launched from the selected `Config.ini` folder, so renamed loader executables are blocked before Apply.
+diff --git a/README.md b/README.md
+index 0653253..9777ba7 100644
+--- a/README.md
++++ b/README.md
+@@ -25,6 +25,7 @@ The app is built around a preview-first workflow:
+ - Keyboard layout profiles, including US QWERTY, German QWERTZ, and International Safe.
+ - Preview CSV reports before writes.
+ - Backups before Apply and cleanup writes.
++- Scoped cleanup for the selected Config.ini section and/or Debounce target, with backups and post-write verification.
+ - Renamed-loader detection based on the selected `Config.ini` folder, plus an optional explicit loader path.
+ - File-in-use checks, post-write verification, and automatic rollback when an Apply fails.
+ - Preflight setup checks.
+diff --git a/src/wow_keybind_app.py b/src/wow_keybind_app.py
+index ac8a4da..36c2a30 100644
+--- a/src/wow_keybind_app.py
++++ b/src/wow_keybind_app.py
+@@ -2306,14 +2306,14 @@ class App(ctk.CTk):
+         )
+         ctk.CTkButton(
+             button_row,
+-            text="Remove Old Debounce Binds",
+-            width=190,
++            text="Remove Old Binds",
++            width=160,
+             height=34,
+             corner_radius=8,
+             fg_color=ctk_theme("danger_bg"),
+             hover_color=ctk_theme("danger_hover"),
+             text_color=ctk_theme("danger"),
+-            command=self.remove_old_debounce_binds,
++            command=self.remove_old_binds,
+         ).pack(side="left", padx=(8, 0))
+         support_row = ctk.CTkFrame(card, fg_color="transparent")
+         support_row.grid(row=3, column=0, columnspan=4, sticky="ew", padx=14, pady=(0, 14))
+@@ -4197,59 +4197,180 @@ class App(ctk.CTk):
+             self.write_log(f"{exc}\n\n{details}")
+             messagebox.showerror("Export Bug Report", str(exc))
+ 
+-    def remove_old_debounce_binds(self) -> None:
++    def choose_cleanup_scope(self) -> str | None:
++        dialog = tk.Toplevel(self)
++        dialog.title("Remove Old Binds")
++        dialog.transient(self)
++        dialog.grab_set()
++        dialog.resizable(False, False)
++
++        scope = tk.StringVar(value="both")
++        result: dict[str, str | None] = {"scope": None}
++        body = ttk.Frame(dialog, padding=16)
++        body.grid(row=0, column=0, sticky="nsew")
++        ttk.Label(
++            body,
++            text="Choose what to clear for the selected class/spec target:",
++            style="Muted.TLabel",
++        ).grid(row=0, column=0, sticky="w", pady=(0, 8))
++        ttk.Radiobutton(body, text="Both Config.ini and Debounce", variable=scope, value="both").grid(
++            row=1, column=0, sticky="w", pady=2
++        )
++        ttk.Radiobutton(body, text="Config.ini only", variable=scope, value="config").grid(
++            row=2, column=0, sticky="w", pady=2
++        )
++        ttk.Radiobutton(body, text="Debounce only", variable=scope, value="debounce").grid(
++            row=3, column=0, sticky="w", pady=2
++        )
++        ttk.Label(
++            body,
++            text="Backups are created before any selected file is changed.",
++            style="Muted.TLabel",
++        ).grid(row=4, column=0, sticky="w", pady=(8, 12))
++
++        buttons = ttk.Frame(body)
++        buttons.grid(row=5, column=0, sticky="e")
++
++        def cancel() -> None:
++            result["scope"] = None
++            dialog.destroy()
++
++        def accept() -> None:
++            result["scope"] = scope.get()
++            dialog.destroy()
++
++        ttk.Button(buttons, text="Cancel", command=cancel).pack(side="right")
++        ttk.Button(buttons, text="Continue", command=accept).pack(side="right", padx=(0, 8))
++        dialog.protocol("WM_DELETE_WINDOW", cancel)
++        self._center_child_window(dialog)
++        self.wait_window(dialog)
++        return result["scope"]
++
++    def ensure_cleanup_targets_available(self, paths: list[Path], config_path: Path | None) -> None:
++        blockers = self.running_apply_blockers(config_path)
++        locked = [path.name for path in paths if file_has_exclusive_access_conflict(path)]
++        if blockers or locked:
++            details: list[str] = []
++            if blockers:
++                details.append("Close: " + ", ".join(blockers))
++            if locked:
++                details.append("Files currently in use: " + ", ".join(locked))
++            raise RuntimeError("Close WoW and the loader before removing old binds. " + "; ".join(details))
++
++    def remove_old_binds(self) -> None:
+         try:
+             section = self.section.get().strip()
+             if not section:
+                 raise RuntimeError("Choose a class/spec or General first.")
+-            if self.macro_addon.get() == "BindPad":
+-                raise RuntimeError("This cleanup button is only for Debounce. Choose Debounce first.")
+-            addon_path = Path(self.debounce_path.get())
+-            if not addon_path.exists():
+-                raise RuntimeError("Choose a valid Debounce.lua path.")
+-            addon_path = normalize_debounce_path(addon_path)
+-            self.debounce_path.set(str(addon_path))
++            scope = self.choose_cleanup_scope()
++            if scope is None:
++                return
++
++            use_debounce = scope in {"debounce", "both"}
++            use_config = scope in {"config", "both"}
++            addon_path: Path | None = None
++            addon_text = ""
++            addon_encoding = "utf-8"
++            debounce_vars: dict[object, object] | None = None
++            debounce_removed = 0
++            if use_debounce:
++                if self.macro_addon.get() == "BindPad":
++                    raise RuntimeError("Debounce cleanup is unavailable while BindPad is selected.")
++                addon_path = Path(self.debounce_path.get())
++                if not addon_path.exists():
++                    raise RuntimeError("Choose a valid Debounce.lua path.")
++                addon_path = normalize_debounce_path(addon_path)
++                self.debounce_path.set(str(addon_path))
++                addon_text, addon_encoding, _newline = sync.read_text(addon_path)
++                debounce_vars = sync.parse_debounce_vars(addon_text)
++                class_file, spec_index = sync.section_to_debounce_target(section)
++                debounce_removed = sync.clear_debounce_target(debounce_vars, class_file, spec_index)
++
+             config_raw = self.ggl_config.get().strip().strip('"')
+             config_path = Path(config_raw) if config_raw else None
+-            running = self.running_apply_blockers(config_path)
+-            if running:
+-                raise RuntimeError(
+-                    "Close these before cleaning Debounce: "
+-                    + ", ".join(running)
+-                    + ". Then run cleanup again."
+-                )
++            config_text = ""
++            config_encoding = "utf-8"
++            config_newline = "\n"
++            config_lines: list[str] = []
++            config_entries: list[sync.GglEntry] = []
++            config_removed = 0
++            if use_config:
++                if config_path is None or not config_path.exists():
++                    raise RuntimeError("Choose a valid Config.ini path.")
++                config_text, config_encoding, config_newline = sync.read_text(config_path)
++                sections, config_lines = sync.parse_ggl_entries(config_text)
++                if section not in sections:
++                    raise RuntimeError(f"Selected section is not in Config.ini: {section}")
++                config_entries = sections[section]
++                _cleared_lines, config_removed = sync.clear_ggl_entries(config_lines, config_entries)
+ 
+             target = "General" if section == "General" else section
++            selected_paths = [path for path in (addon_path, config_path) if path is not None]
++            self.ensure_cleanup_targets_available(selected_paths, config_path)
++
++            scope_label = {
++                "debounce": "Debounce",
++                "config": "Config.ini",
++                "both": "Config.ini and Debounce",
++            }[scope]
+             confirmed = messagebox.askyesno(
+-                "Remove Old Debounce Binds",
+-                "This will remove ALL Debounce entries in the selected target:\n\n"
++                "Remove Old Binds",
++                f"This will clear the selected {scope_label} binds in:\n\n"
+                 f"{target}\n\n"
+-                "A backup will be created first. Config.ini will not be changed.\n\n"
+-                "After this, press Apply to rebuild the current binds.\n\n"
++                f"Debounce entries to remove: {debounce_removed}\n"
++                f"Config.ini values to clear: {config_removed}\n\n"
++                "Backups will be created before writing. WoW and the loader must be restarted or reloaded afterward.\n\n"
+                 "Continue?",
+             )
+             if not confirmed:
+                 return
+ 
+-            text, encoding, _newline = sync.read_text(addon_path)
+-            vars_table = sync.parse_debounce_vars(text)
+-            class_file, spec_index = sync.section_to_debounce_target(section)
+-            removed = sync.clear_debounce_target(vars_table, class_file, spec_index)
+-            backup = sync.backup_file(addon_path)
+-            sync.write_text(addon_path, "DebounceVars = " + sync.dump_lua(vars_table) + "\n", encoding)
+-            self.write_log(
+-                f"Removed {removed} Debounce entries from {target}.\n"
+-                f"Backup: {backup}\n\n"
+-                "Press Apply to rebuild the current binds."
+-            )
++            # Repeat the process/file check immediately before creating backups and writing.
++            self.ensure_cleanup_targets_available(selected_paths, config_path)
++            originals: dict[Path, bytes] = {path: path.read_bytes() for path in selected_paths}
++            backups: list[Path] = []
++            changed_paths: list[Path] = []
++            try:
++                if use_debounce and debounce_vars is not None and addon_path is not None and debounce_removed:
++                    backups.append(sync.backup_file(addon_path))
++                    addon_output = "DebounceVars = " + sync.dump_lua(debounce_vars) + "\n"
++                    sync.write_text(addon_path, addon_output, addon_encoding)
++                    if sync.read_text(addon_path)[0] != addon_output:
++                        raise RuntimeError("Debounce verification failed after cleanup.")
++                    changed_paths.append(addon_path)
++
++                if use_config and config_removed and config_path is not None:
++                    backups.append(sync.backup_file(config_path))
++                    config_output = config_newline.join(
++                        sync.clear_ggl_entries(config_lines, config_entries)[0]
++                    ) + config_newline
++                    sync.write_text(config_path, config_output, config_encoding)
++                    if sync.read_text(config_path)[0] != config_output:
++                        raise RuntimeError("Config.ini verification failed after cleanup.")
++                    changed_paths.append(config_path)
++            except Exception:
++                for path, original in originals.items():
++                    if path in changed_paths or path.exists():
++                        try:
++                            sync.write_bytes_atomic(path, original)
++                        except Exception:
++                            pass
++                raise
++
++            details = [
++                f"Debounce: removed {debounce_removed} entries from {target}." if use_debounce else "Debounce: unchanged.",
++                f"Config.ini: cleared {config_removed} values in {target}." if use_config else "Config.ini: unchanged.",
++            ]
++            backup_text = "\n".join(f"Backup: {backup}" for backup in backups) if backups else "No changes were needed; no backup was created."
++            self.write_log("\n".join(details) + "\n" + backup_text + "\n\nRestart/reload WoW and the loader before applying new binds.")
+             messagebox.showinfo(
+-                "Remove Old Debounce Binds",
+-                f"Removed {removed} Debounce entries from {target}. Press Apply to rebuild current binds.",
++                "Remove Old Binds",
++                "\n".join(details) + "\n\n" + backup_text,
+             )
+         except Exception as exc:
+             details = traceback.format_exc()
+             self.write_log(f"{exc}\n\n{details}")
+-            messagebox.showerror("Remove Old Debounce Binds", str(exc))
++            messagebox.showerror("Remove Old Binds", str(exc))
+ 
+     def _write_text_widget(self, widget: tk.Text, text: str) -> None:
+         widget.configure(state="normal")
+diff --git a/src/wow_keybind_sync.py b/src/wow_keybind_sync.py
+index 03a6a55..bc89929 100644
+--- a/src/wow_keybind_sync.py
++++ b/src/wow_keybind_sync.py
+@@ -1034,6 +1034,27 @@ def rewrite_ggl_lines(
+     return updated
+ 
+ 
++def clear_ggl_entries(lines: list[str], entries: list[GglEntry]) -> tuple[list[str], int]:
++    """Clear key values for the supplied Config.ini entries.
++
++    Comments and action names remain intact so the loader can continue to
++    recognize the section while its old key assignments are removed.
++    """
++    updated = list(lines)
++    changed = 0
++    seen_lines: set[int] = set()
++    for entry in entries:
++        line_index = entry.line_index
++        if line_index in seen_lines or not 0 <= line_index < len(updated):
++            continue
++        seen_lines.add(line_index)
++        rewritten = set_ggl_line_value(updated[line_index], "")
++        if rewritten != updated[line_index]:
++            changed += 1
++            updated[line_index] = rewritten
++    return updated, changed
++
++
+ def ggl_token_to_key(token: str) -> tuple[KeyBind | None, str | None]:
+     match = re.fullmatch(
+         r"(?P<mods>[\^\!\+]*?)sc(?P<scan>[0-9A-Fa-f]+)(?:_(?P<suffix>\d+))?",
+diff --git a/tests/test_cleanup.py b/tests/test_cleanup.py
+new file mode 100644
+index 0000000..c3d136e
+--- /dev/null
++++ b/tests/test_cleanup.py
+@@ -0,0 +1,56 @@
++from __future__ import annotations
++
++import sys
++import unittest
++from pathlib import Path
++
++
++ROOT = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(ROOT / "src"))
++
++import wow_keybind_sync as sync
++
++
++class CleanupTests(unittest.TestCase):
++    def test_clear_ggl_entries_preserves_names_and_comments(self) -> None:
++        text = """[General]\nTargetEnemy=^sc1E_123 ; keep comment\nStartAttack=\n\n[Warrior - Fury]\nCharge=sc20_123\n"""
++        sections, lines = sync.parse_ggl_entries(text)
++
++        cleared, removed = sync.clear_ggl_entries(lines, sections["General"])
++
++        self.assertEqual(removed, 1)
++        self.assertEqual(
++            "\n".join(cleared),
++            "[General]\nTargetEnemy=; keep comment\nStartAttack=\n\n[Warrior - Fury]\nCharge=sc20_123",
++        )
++
++    def test_clear_ggl_entries_only_changes_selected_section(self) -> None:
++        text = """[General]\nTargetEnemy=^sc1E_123\n\n[Warrior - Fury]\nCharge=sc20_123\n"""
++        sections, lines = sync.parse_ggl_entries(text)
++
++        cleared, removed = sync.clear_ggl_entries(lines, sections["Warrior - Fury"])
++
++        self.assertEqual(removed, 1)
++        self.assertIn("TargetEnemy=^sc1E_123", cleared)
++        self.assertIn("Charge=", cleared)
++
++    def test_clear_debounce_target_only_clears_selected_spec(self) -> None:
++        vars_table = {
++            "WARRIOR": {
++                1: {1: {"name": "old arms"}},
++                2: {1: {"name": "old fury"}},
++            },
++            "GENERAL": {1: {"name": "old general"}},
++        }
++        class_file, spec_index = sync.section_to_debounce_target("Warrior - Fury")
++
++        removed = sync.clear_debounce_target(vars_table, class_file, spec_index)
++
++        self.assertEqual(removed, 1)
++        self.assertEqual(vars_table["WARRIOR"][2], {})
++        self.assertEqual(vars_table["WARRIOR"][1][1]["name"], "old arms")
++        self.assertEqual(vars_table["GENERAL"][1]["name"], "old general")
++
++
++if __name__ == "__main__":
++    unittest.main()

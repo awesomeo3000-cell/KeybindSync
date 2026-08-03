@@ -1,0 +1,14 @@
+﻿NumLock warning verification record
+timestamp=2026-08-03T11:11:30.6360123-04:00
+baseline=artifacts/numlock-warning-baseline-20260803
+modified=artifacts/numlock-warning-modified-20260803
+patch_sha256=990CBE82DCB822C3424A0F4D5F9E759619DC8A17E462489F226DFC3CB095533E
+exe_sha256=7E38967514D9D99661462A31B8B35DB73355532ED721902A6BAD8EE1B829AAF9
+  python -m compileall -q src tests => exit 0
+  python -m unittest discover -s tests -v => exit 0; Ran 18 tests; OK
+  git diff --check => exit 0 (CRLF warnings only)
+  NumLock API check => exit 0; current state read successfully
+  num_lock_guidance unit checks => exit 0; NumPad unselected=None, ON=OK, OFF=WARN
+  packaged EXE self-test => exit 0
+  git apply --check --reverse --exclude=tests/test_cleanup.py artifacts/numlock-warning.patch => exit 0
+  rollback_numlock_warning.ps1 staging test => exit 0; five-file hash comparison passed

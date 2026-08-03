@@ -1,0 +1,32 @@
+﻿[
+    {
+        "RelativePath":  "README.md",
+        "Hash":  "61EB43B698930E3E5D23E34F9B716A212DB5C671ED961F5093F3BF6F25C3499B",
+        "Length":  2457
+    },
+    {
+        "RelativePath":  "CHANGELOG.md",
+        "Hash":  "29EF0C782FA98551E18801606D5FB0F3B4D3A81BBA3703FF14A461FCED9111B0",
+        "Length":  3140
+    },
+    {
+        "RelativePath":  "src\\wow_keybind_app.py",
+        "Hash":  "ECB07772FF5470D473B3DD00CCF79EA2780B390CFE5EB7E03BE0E59106377754",
+        "Length":  233842
+    },
+    {
+        "RelativePath":  "src\\wow_keybind_sync.py",
+        "Hash":  "4C4150543CF5C5DD6249D8C10B78CE6981DB64A3D438BE1F7C122BE8A025F0FF",
+        "Length":  71525
+    },
+    {
+        "RelativePath":  "tests\\test_numpad_keys.py",
+        "Hash":  "1FB3753DCBEBB09D7C525AA1B9DBD55807C154CA05AAD4CE2B67658745D34F4F",
+        "Length":  1774
+    },
+    {
+        "RelativePath":  "tests\\test_process_safety.py",
+        "Hash":  "3A73CE0CCC87841665CC6C4060F510E3FA271373714D5C75C9EB24B222E63D98",
+        "Length":  4109
+    }
+]

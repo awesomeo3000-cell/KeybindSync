@@ -1,0 +1,49 @@
+--- a/src/wow_keybind_app.py
++++ b/src/wow_keybind_app.py
+@@ -2254,7 +2254,11 @@
+         ).pack(side="left", padx=(8, 0))
+         ctk.CTkLabel(
+             key_frame,
+-            text="Numpad is optional because Num Lock and compact keyboards can behave differently.",
++            text=(
++                "Full keyboard? Click Enable Numpad. Num 5 is one physical key: with Num Lock on "
++                "loaders may say NUMPAD5; with Num Lock off they may say NUMPADCLEAR, CLEAR, "
++                "or NUMPADDCLE. Enable Num 5—there is no separate Clear key to select."
++            ),
+             text_color=ctk_theme("muted"),
+             anchor="w",
+             justify="left",
+--- a/tests/test_cleanup.py
++++ b/tests/test_cleanup.py
+@@ -16,7 +16,10 @@
+     def test_loader_numpad_clear_aliases_map_to_numpad5(self) -> None:
+         for label in ("NUMPADCLEAR", "NUMPADDCLE", "NUMPADCLE"):
+             with self.subTest(label=label):
+-                self.assertEqual(sync.parse_keybind_label(label).scan_code, sync.SCAN_CODES["NUMPAD5"])
++                key = sync.parse_keybind_label(label)
++                self.assertEqual(key.scan_code, sync.SCAN_CODES["NUMPAD5"])
++                self.assertEqual(key.human(), "NUMPAD5")
++                self.assertEqual(key.debounce(), "NUMPAD5")
+ 
+     def test_general_actions_are_dynamic_and_keep_config_names(self) -> None:
+         names = {
+--- a/README.md
++++ b/README.md
+@@ -21,6 +21,7 @@
+ - Custom pixel/macro overrides.
+ - Optional Config.ini `[General]` binds, including targeting, stopcasting, trinkets, healthstone, potions, and other General actions.
+ - General actions are discovered from the loaded Config.ini instead of a fixed action allowlist; NumPad 5 label variants are normalized when reading loader data.
++- NumPad guidance explains that NumPad 5 and the NumLock-off `CLEAR`/`NUMPADCLEAR` labels are the same physical key.
+ - Randomized bind layouts with repeatable seeds.
+ - Modifier and key-pool controls, including numpad and function-key toggles.
+ - Keyboard layout profiles, including US QWERTY, German QWERTZ, and International Safe.
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -5,6 +5,7 @@
+ - The Advanced cleanup action can now clear old key assignments from the selected `Config.ini` section, the selected Debounce target, or both, with backups and verification.
+ - General actions now match common loader spellings such as `Trinket 1`, `Health Stone`, and `Healing Potion`; observed `NUMPADDCLE`/`NUMPADCLE` labels are treated as NumPad 5.
+ - General binds are now discovered dynamically from the Config.ini `[General]` section, including `StopCasting`, party focus actions, `Whipper Root Tuber`, and other user-defined entries.
++- Key Rules now explicitly explains the NumPad 5 / NumLock-off `CLEAR` label relationship and the Enable Numpad action.
+ 
+ ## 1.3.2
+ 
