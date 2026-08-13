@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Sync safe WoW keybinds into Debounce.lua and GGL Config.ini.
+Sync safe WoW keybinds into Debind/Debounce.lua and GGL Config.ini.
 
 Preview first:
     python wow_keybind_sync.py --section "Warrior - Fury"
@@ -28,6 +28,9 @@ from typing import Any
 DEFAULT_DEBOUNCE = Path(
     r"C:\World of Warcraft\_retail_\WTF\Account\YOUR ACCOUNT NUMBER\SavedVariables\Debounce.lua"
 )
+DEFAULT_DEBIND = Path(
+    r"C:\World of Warcraft\_retail_\WTF\Account\YOUR ACCOUNT NUMBER\SavedVariables\Debind.lua"
+)
 DEFAULT_GGL = Path(r"C:\Program Files (x86)\Your Folder Name\Config.ini")
 DEFAULT_CONFIG_JSON = DEFAULT_GGL.with_name("config.json")
 
@@ -38,6 +41,13 @@ MANAGED_SOURCE = "WoWKeybindSync"
 BINDPAD_DEFAULT_SLOTS = 49
 BINDPAD_PROFILE_VERSION = 252
 MAX_LUA_DEPTH = 200
+
+# Debind (Debounce 3.x) keeps an account-wide `DebindVars` table with `dbver = 5`.
+# Its CleanUpDB strips any action field that is not in KEYS_TO_SAVE, except keys
+# that start with `$`, so managed actions are marked with a `$`-prefixed field
+# instead of `source`.
+DEBIND_DB_VERSION = 5
+DEBIND_MANAGED_MARKER = "$wowKeybindSync"
 _NUM_RE = re.compile(
     r"-?(?:"
     r"0[xX][0-9A-Fa-f]+(?:\.[0-9A-Fa-f]*)?(?:[pP][+-]?\d+)?"
@@ -880,6 +890,37 @@ def parse_debounce_vars(text: str) -> dict[Any, Any]:
     return value
 
 
+def parse_debind_vars(text: str) -> dict[Any, Any]:
+    match = re.search(r"\bDebindVars\s*=", text)
+    if not match:
+        if re.search(r"\bDebounceVars\s*=", text):
+            raise LuaParseError(
+                "This is a Debounce (pre-3.x) SavedVariables file. Debind stores its "
+                "settings in WTF\\Account\\<account>\\SavedVariables\\Debind.lua. Select "
+                "Debind in the app, or choose Debounce if you still use the old addon."
+            )
+        raise LuaParseError("Could not find DebindVars assignment")
+    parser = LuaParser(text, match.end())
+    value = parser.parse_value()
+    if not isinstance(value, dict):
+        raise LuaParseError("DebindVars is not a table")
+    return value
+
+
+def debind_legacy_import_pending(debounce_path: Path, debind_vars: dict[Any, Any]) -> bool:
+    """True when a stale Debounce.lua could still be imported by Debind's one-shot
+    migration and overwrite the shared layers written to Debind.lua."""
+    if not debounce_path.exists():
+        return False
+    if debind_vars.get("legacyAccountPulled") is True or debind_vars.get("legacyNeeded") is False:
+        return False
+    try:
+        text, _, _ = read_text(debounce_path)
+    except Exception:
+        return False
+    return bool(re.search(r"\bDebounceVars\s*=", text))
+
+
 def parse_bindpad_vars(text: str) -> dict[Any, Any]:
     match = re.search(r"\bBindPadVars\s*=", text)
     if not match:
@@ -1311,6 +1352,18 @@ def section_to_debounce_target(section: str) -> tuple[str, int | None]:
     raise SystemExit(f"Unsupported class/spec in section {section!r}")
 
 
+def section_to_debind_target(section: str) -> tuple[str, int | None]:
+    target = retail_debounce_target_from_section(section)
+    if target:
+        return target
+    if " - " not in section:
+        raise SystemExit(
+            f"Cannot infer Debind class/spec from section {section!r}. "
+            "Use a retail section like \"Warrior - Fury\"."
+        )
+    raise SystemExit(f"Unsupported class/spec in section {section!r}")
+
+
 def bindpad_spec_index_for_section(section: str) -> int | None:
     target = retail_debounce_target_from_section(section)
     if target:
@@ -1682,7 +1735,140 @@ def update_debounce(
     return len(new_actions)
 
 
-def bindpad_numeric_slots(table: dict[Any, Any]) -> list[Any]:
+def debind_layer_tables(
+    vars_table: dict[Any, Any],
+    class_file: str,
+    spec_index: int | None,
+) -> tuple[dict[Any, Any], dict[Any, Any]]:
+    """Return (shared, target_layer) for a Debind class/spec target.
+
+    Debind keeps shared layers under `DebindVars.shared`:
+    the account-wide layer is `shared.GENERAL` and class layers live under
+    `shared.classes[class_file][spec]` where `spec` is the 1-based spec index.
+    """
+    shared = vars_table.setdefault("shared", {})
+    if not isinstance(shared, dict):
+        shared = {}
+        vars_table["shared"] = shared
+    if class_file == "GENERAL":
+        return shared, shared
+    classes = shared.setdefault("classes", {})
+    if not isinstance(classes, dict):
+        classes = {}
+        shared["classes"] = classes
+    class_table = classes.setdefault(class_file, {})
+    if not isinstance(class_table, dict):
+        class_table = {}
+        classes[class_file] = class_table
+    if spec_index is None:
+        raise ValueError("spec_index is required for class-specific Debind target")
+    return shared, class_table
+
+
+def debind_scaffolding(vars_table: dict[Any, Any]) -> None:
+    vars_table["dbver"] = DEBIND_DB_VERSION
+    vars_table.setdefault("options", {}).setdefault("blizzframes", {})
+    vars_table.setdefault("ui", {})
+    vars_table.setdefault("customStates", {})
+    vars_table.setdefault("characters", {})
+    vars_table.setdefault("migrated", {})
+
+
+def clear_debind_target(
+    vars_table: dict[Any, Any],
+    class_file: str,
+    spec_index: int | None,
+) -> int:
+    shared, container = debind_layer_tables(vars_table, class_file, spec_index)
+    if class_file == "GENERAL":
+        existing = layer_to_list(shared.get("GENERAL", {}))
+        shared["GENERAL"] = {}
+    else:
+        existing = layer_to_list(container.get(spec_index, {}))
+        container[spec_index] = {}
+    debind_scaffolding(vars_table)
+    return len(existing)
+
+
+def update_debind(
+    vars_table: dict[Any, Any],
+    class_file: str,
+    spec_index: int | None,
+    plans: list[PlannedBind],
+    replace_managed: bool,
+    cleanup_names: set[str] | None = None,
+    cleanup_keys: set[str] | None = None,
+    layout: KeyLayout | None = None,
+) -> int:
+    selected_layout = layout or US_QWERTY_LAYOUT
+    new_actions = []
+    planned_names = set()
+    for plan in plans:
+        if not plan.key or not plan.macro:
+            continue
+        debounce_name = plan.debounce_name or plan.action.name
+        planned_names.add(plan.action.name)
+        planned_names.add(debounce_name)
+        action = {
+            "type": "macrotext",
+            "name": f"{MANAGED_PREFIX}{debounce_name}",
+            "value": plan.macro,
+            "icon": plan.icon,
+            "key": plan.key.debounce(selected_layout),
+            DEBIND_MANAGED_MARKER: True,
+        }
+        new_actions.append(action)
+
+    names_to_remove = set(cleanup_names or planned_names)
+    names_to_remove.update(planned_names)
+    keys_to_remove = set(cleanup_keys or ())
+    keys_to_remove.update(plan.key.debounce(selected_layout) for plan in plans if plan.key)
+
+    shared, container = debind_layer_tables(vars_table, class_file, spec_index)
+    layer = (
+        shared.setdefault("GENERAL", {})
+        if class_file == "GENERAL"
+        else container.setdefault(spec_index, {})
+    )
+    if not isinstance(layer, dict):
+        layer = {}
+        if class_file == "GENERAL":
+            shared["GENERAL"] = layer
+        else:
+            container[spec_index] = layer
+
+    existing = layer_to_list(layer)
+    if replace_managed:
+        existing = [
+            action
+            for action in existing
+            if not (
+                isinstance(action, dict)
+                and (
+                    action.get(DEBIND_MANAGED_MARKER)
+                    or key_matches_cleanup(
+                        action.get("key"), keys_to_remove, selected_layout
+                    )
+                    or (
+                        isinstance(action.get("name"), str)
+                        and (
+                            action["name"].startswith(OLD_MANAGED_PREFIX)
+                            or action["name"] in names_to_remove
+                        )
+                    )
+                )
+            )
+        ]
+    merged = existing + new_actions
+    replacement = list_to_layer(merged)
+
+    if class_file == "GENERAL":
+        shared["GENERAL"] = replacement
+    else:
+        container[spec_index] = replacement
+
+    debind_scaffolding(vars_table)
+    return len(new_actions)
     slots = [(key, value) for key, value in table.items() if isinstance(key, int) and key >= 1]
     return [value for _, value in sorted(slots, key=lambda item: item[0])]
 
@@ -1943,16 +2129,23 @@ def default_seed_path(ggl_config: Path) -> Path | None:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Sync WoW keybinds into Debounce and GGL.")
+    parser = argparse.ArgumentParser(description="Sync WoW keybinds into Debind/Debounce and GGL.")
     parser.add_argument("--section", help='GGL section, for example "Warrior - Fury".')
     parser.add_argument("--apply", action="store_true", help="Write changes. Without this, only preview.")
     parser.add_argument("--overwrite-ggl", action="store_true", help="Replace existing GGL hotkeys too.")
     parser.add_argument(
         "--keep-old-managed",
         action="store_true",
-        help="Do not remove earlier Debounce actions whose names start with GGL:.",
+        help="Do not remove earlier Debounce/Debind actions whose names start with GGL:.",
+    )
+    parser.add_argument(
+        "--addon",
+        choices=("debind", "debounce"),
+        default="debounce",
+        help="Bind addon target: Debind (Debounce 3.x) or classic Debounce.",
     )
     parser.add_argument("--debounce-path", type=Path, default=DEFAULT_DEBOUNCE)
+    parser.add_argument("--debind-path", type=Path, default=DEFAULT_DEBIND)
     parser.add_argument("--ggl-config", type=Path, default=DEFAULT_GGL)
     parser.add_argument("--config-json", type=Path, default=DEFAULT_CONFIG_JSON)
     parser.add_argument("--seed-config", type=Path, help="Optional older Config.ini to copy known keys from.")
@@ -2068,7 +2261,15 @@ def main() -> int:
         blocked_keys,
         layout=layout,
     )
-    class_file, spec_index = section_to_debounce_target(section)
+    addon_kind = args.addon
+    addon_label = "Debind" if addon_kind == "debind" else "Debounce"
+    addon_path = args.debind_path if addon_kind == "debind" else args.debounce_path
+    section_target = (
+        section_to_debind_target(section)
+        if addon_kind == "debind"
+        else section_to_debounce_target(section)
+    )
+    class_file, spec_index = section_target
 
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     safe_section = re.sub(r"[^A-Za-z0-9]+", "_", section).strip("_")
@@ -2080,9 +2281,9 @@ def main() -> int:
     warnings = [plan for plan in plans if plan.warning]
 
     print(f"Section: {section}")
-    print(f"Debounce target: {class_file}" + (f" spec {spec_index}" if spec_index else ""))
+    print(f"{addon_label} target: {class_file}" + (f" spec {spec_index}" if spec_index else ""))
     print(f"Planned GGL binds: {assigned}/{len(plans)}")
-    print(f"Planned Debounce macro binds: {debounce_count}")
+    print(f"Planned {addon_label} macro binds: {debounce_count}")
     print(f"GGL keyboard suffix: {suffix}")
     print(f"Keyboard layout: {layout.name}")
     if random_seed:
@@ -2119,7 +2320,7 @@ def main() -> int:
         print("Preview:")
         for plan in preview:
             key = plan.key.human(layout) if plan.key else "NO KEY"
-            macro_note = "Debounce" if plan.macro else "GGL only"
+            macro_note = addon_label if plan.macro else "GGL only"
             print(f"  {plan.action.name}: {key} ({plan.source}, {macro_note})")
         if len(plans) > len(preview):
             print(f"  ... {len(plans) - len(preview)} more")
@@ -2129,22 +2330,53 @@ def main() -> int:
         print("Preview only. Re-run with --apply to write backups and update the files.")
         return 0
 
-    debounce_text, debounce_encoding, _ = read_text(args.debounce_path)
-    vars_table = parse_debounce_vars(debounce_text)
+    addon_text, addon_encoding, _ = read_text(addon_path)
+    if addon_kind == "debind":
+        vars_table = parse_debind_vars(addon_text)
+    else:
+        vars_table = parse_debounce_vars(addon_text)
 
-    debounce_backup = backup_file(args.debounce_path)
+    addon_backup = backup_file(addon_path)
     ggl_backup = backup_file(args.ggl_config)
 
-    update_debounce(
-        vars_table,
-        class_file,
-        spec_index,
-        plans,
-        replace_managed=not args.keep_old_managed,
-        layout=layout,
-    )
-    new_debounce = "DebounceVars = " + dump_lua(vars_table) + "\n"
-    write_text(args.debounce_path, new_debounce, debounce_encoding)
+    legacy_note = None
+    if addon_kind == "debind":
+        legacy_path = addon_path.with_name("Debounce.lua")
+        if debind_legacy_import_pending(legacy_path, vars_table):
+            legacy_backup = backup_file(legacy_path)
+            try:
+                legacy_path.unlink()
+                legacy_note = (
+                    "Legacy Debounce.lua backed up and removed so Debind's one-time "
+                    f"migration cannot overwrite these binds: {legacy_backup}"
+                )
+            except OSError:
+                legacy_note = (
+                    "Legacy Debounce.lua backed up but could not be removed; Debind's "
+                    f"one-time migration may still import it on next login: {legacy_backup}"
+                )
+
+    if addon_kind == "debind":
+        update_debind(
+            vars_table,
+            class_file,
+            spec_index,
+            plans,
+            replace_managed=not args.keep_old_managed,
+            layout=layout,
+        )
+        new_addon = "DebindVars = " + dump_lua(vars_table) + "\n"
+    else:
+        update_debounce(
+            vars_table,
+            class_file,
+            spec_index,
+            plans,
+            replace_managed=not args.keep_old_managed,
+            layout=layout,
+        )
+        new_addon = "DebounceVars = " + dump_lua(vars_table) + "\n"
+    write_text(addon_path, new_addon, addon_encoding)
 
     new_lines = rewrite_ggl_lines(ggl_lines, plans, args.overwrite_ggl)
     new_ggl_text = ggl_newline.join(new_lines) + ggl_newline
@@ -2152,8 +2384,10 @@ def main() -> int:
 
     print("")
     print("Applied.")
-    print(f"Debounce backup: {debounce_backup}")
+    print(f"{addon_label} backup: {addon_backup}")
     print(f"GGL backup: {ggl_backup}")
+    if legacy_note:
+        print(legacy_note)
     return 0
 
 

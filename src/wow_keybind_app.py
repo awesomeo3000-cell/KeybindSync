@@ -24,7 +24,7 @@ import customtkinter as ctk
 import wow_keybind_sync as sync
 
 
-APP_VERSION = "1.3.5"
+APP_VERSION = "1.4.0"
 
 
 def general_action_names(names: set[str] | list[str]) -> set[str]:
@@ -260,9 +260,18 @@ SEED_CONFIG_EXAMPLE_PATH = r"C:\Program Files (x86)\Your Folder Name\Config BACK
 DEBOUNCE_EXAMPLE_PATH = (
     r"C:\World of Warcraft\_retail_\WTF\Account\YOUR ACCOUNT NUMBER\SavedVariables\Debounce.lua"
 )
+DEBIND_EXAMPLE_PATH = (
+    r"C:\World of Warcraft\_retail_\WTF\Account\YOUR ACCOUNT NUMBER\SavedVariables\Debind.lua"
+)
 BINDPAD_EXAMPLE_PATH = (
     r"C:\World of Warcraft\_retail_\WTF\Account\YOUR ACCOUNT NUMBER\SavedVariables\BindPad.lua"
 )
+
+ADDON_NAMES = ("Debind", "Debounce", "BindPad")
+
+
+def addon_display_name(macro_addon: str) -> str:
+    return macro_addon if macro_addon in ADDON_NAMES else "Debounce"
 
 
 def app_dir() -> Path:
@@ -691,6 +700,20 @@ def canonical_debounce_candidate(path: Path) -> Path | None:
     return normalized
 
 
+def canonical_debind_candidate(path: Path) -> Path | None:
+    if path.name.lower() != "debind.lua" or not path.exists():
+        return None
+    lower_parts = {part.lower() for part in path.parts}
+    if "interface" in lower_parts and "addons" in lower_parts:
+        return None
+    try:
+        text, _, _ = sync.read_text(path)
+        sync.parse_debind_vars(text)
+    except Exception:
+        return None
+    return path
+
+
 def canonical_bindpad_candidate(path: Path) -> Path | None:
     if path.name.lower() != "bindpad.lua" or not path.exists():
         return None
@@ -706,7 +729,11 @@ def canonical_bindpad_candidate(path: Path) -> Path | None:
 
 
 def find_addon_saved_variable_candidates(addon: str, hint_path: Path | None = None) -> list[Path]:
-    filename = "BindPad.lua" if addon == "BindPad" else "Debounce.lua"
+    filename = {
+        "BindPad": "BindPad.lua",
+        "Debind": "Debind.lua",
+        "Debounce": "Debounce.lua",
+    }.get(addon, "Debounce.lua")
     raw_candidates: list[Path] = []
     if hint_path:
         raw_candidates.append(hint_path)
@@ -722,11 +749,12 @@ def find_addon_saved_variable_candidates(addon: str, hint_path: Path | None = No
 
     canonical: list[Path] = []
     for candidate in raw_candidates:
-        path = (
-            canonical_bindpad_candidate(candidate)
-            if addon == "BindPad"
-            else canonical_debounce_candidate(candidate)
-        )
+        if addon == "BindPad":
+            path = canonical_bindpad_candidate(candidate)
+        elif addon == "Debind":
+            path = canonical_debind_candidate(candidate)
+        else:
+            path = canonical_debounce_candidate(candidate)
         if path:
             canonical.append(path)
 
@@ -828,7 +856,7 @@ def run_once(
         loader_context_sections = {section}
         if section != "General":
             loader_context_sections.add("General")
-    addon_label = "BindPad" if macro_addon == "BindPad" else "Debounce"
+    addon_label = addon_display_name(macro_addon)
     loader_reserved_keys = sync.collect_ggl_reserved_keys(sections, loader_context_sections, entries)
     effective_blocked_keys.update(loader_reserved_keys)
     class_file: str | None = None
@@ -918,6 +946,13 @@ def run_once(
             before_apply()
         cleanup_keys = {plan.key.debounce(layout) for plan in plans if plan.key}
         addon_text, addon_encoding, _ = sync.read_text(addon_path)
+        legacy_pending = False
+        legacy_backup: Path | None = None
+        legacy_removed = False
+        if macro_addon == "Debind":
+            vars_table = sync.parse_debind_vars(addon_text)
+            legacy_path = addon_path.with_name("Debounce.lua")
+            legacy_pending = sync.debind_legacy_import_pending(legacy_path, vars_table)
         addon_backup = sync.backup_file(addon_path)
         ggl_backup = sync.backup_file(ggl_config)
         if macro_addon == "BindPad":
@@ -934,6 +969,29 @@ def run_once(
             )
             addon_output = "BindPadVars = " + sync.dump_lua(vars_table) + "\n"
             sync.write_text(addon_path, addon_output, addon_encoding)
+        elif macro_addon == "Debind":
+            if class_file is None:
+                raise RuntimeError("Could not determine the Debind class/spec target.")
+            sync.update_debind(
+                vars_table,
+                class_file,
+                spec_index,
+                plans,
+                replace_managed=True,
+                cleanup_names=cleanup_names,
+                cleanup_keys=cleanup_keys,
+                layout=layout,
+            )
+            addon_output = "DebindVars = " + sync.dump_lua(vars_table) + "\n"
+            sync.write_text(addon_path, addon_output, addon_encoding)
+            if legacy_pending:
+                legacy_path = addon_path.with_name("Debounce.lua")
+                legacy_backup = sync.backup_file(legacy_path)
+                try:
+                    legacy_path.unlink()
+                    legacy_removed = True
+                except OSError:
+                    pass
         else:
             vars_table = sync.parse_debounce_vars(addon_text)
             if class_file is None:
@@ -971,7 +1029,30 @@ def run_once(
         lines.append("  Applied.")
         lines.append(f"  {addon_label} backup: {addon_backup}")
         lines.append(f"  Loader backup: {ggl_backup}")
+        if legacy_backup is not None and legacy_removed:
+            lines.append(
+                f"  Legacy Debounce.lua backed up and removed so Debind's one-time "
+                f"migration cannot overwrite these binds: {legacy_backup}"
+            )
+        elif legacy_backup is not None:
+            lines.append(
+                f"  Legacy Debounce.lua backed up but could not be removed; Debind's "
+                f"one-time migration may still import it on next login: {legacy_backup}"
+            )
     else:
+        if macro_addon == "Debind":
+            legacy_path = addon_path.with_name("Debounce.lua")
+            try:
+                text, _, _ = sync.read_text(addon_path)
+                vars_table = sync.parse_debind_vars(text)
+                if sync.debind_legacy_import_pending(legacy_path, vars_table):
+                    lines.append(
+                        "  Note: an old Debounce.lua is still present. On apply it will be "
+                        "backed up and removed so Debind's one-time migration cannot overwrite "
+                        "these binds."
+                    )
+            except Exception:
+                pass
         lines.append("  Preview only.")
 
     return "\n".join(lines), plans
@@ -998,7 +1079,9 @@ class App(ctk.CTk):
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
         self.dark_mode = tk.BooleanVar(value=bool(self.settings.get("dark_mode", False)))
-        self.macro_addon = tk.StringVar(value=str(self.settings.get("macro_addon", "Debounce")))
+        self.macro_addon = tk.StringVar(
+            value=addon_display_name(str(self.settings.get("macro_addon", "Debind")))
+        )
         self.debounce_path = tk.StringVar(value=str(self.settings.get("debounce_path", "")))
         self.ggl_config = tk.StringVar(value=str(self.settings.get("ggl_config", "")))
         self.loader_executable = tk.StringVar(value=str(self.settings.get("loader_executable", "")))
@@ -1219,7 +1302,7 @@ class App(ctk.CTk):
         ).pack(side="right", padx=(12, 0))
         ctk.CTkLabel(
             header,
-            text=f"Debounce + GGL Loader  |  v{APP_VERSION}",
+            text=f"Debind / Debounce + GGL Loader  |  v{APP_VERSION}",
             text_color=ctk_theme("muted"),
             font=("Segoe UI", 10),
             anchor="w",
@@ -1572,7 +1655,7 @@ class App(ctk.CTk):
         self.macro_addon_combo = ctk.CTkComboBox(
             card,
             variable=self.macro_addon,
-            values=["Debounce", "BindPad"],
+            values=list(ADDON_NAMES),
             width=180,
             state="readonly",
             command=lambda _value: self.on_macro_addon_changed(),
@@ -2496,7 +2579,7 @@ class App(ctk.CTk):
         self.express_macro_addon_combo = ctk.CTkComboBox(
             files,
             variable=self.macro_addon,
-            values=["Debounce", "BindPad"],
+            values=list(ADDON_NAMES),
             width=180,
             state="readonly",
             command=lambda _value: self.on_macro_addon_changed(),
@@ -2863,7 +2946,7 @@ class App(ctk.CTk):
         query = self.advanced_section_filter.get().strip().lower()
         sections = [
             section
-            for section in self.playable_sections_for_current_config("Debounce")
+            for section in self.playable_sections_for_current_config()
             if not query or query in section.lower()
         ]
         self.multi_section_visible_sections = sections
@@ -3161,7 +3244,7 @@ class App(ctk.CTk):
         if not hasattr(self, "express_ready_label"):
             return
 
-        addon_name = "BindPad" if self.macro_addon.get() == "BindPad" else "Debounce"
+        addon_name = addon_display_name(self.macro_addon.get())
         addon_raw = self.debounce_path.get().strip().strip('"')
         config_raw = self.ggl_config.get().strip().strip('"')
         section = self.section.get().strip()
@@ -3269,9 +3352,11 @@ class App(ctk.CTk):
                 [SEED_CONFIG_EXAMPLE_PATH],
                 [("INI files", "*.ini"), ("All files", "*.*")],
             )
-        examples = [DEBOUNCE_EXAMPLE_PATH, BINDPAD_EXAMPLE_PATH]
+        examples = [DEBIND_EXAMPLE_PATH, DEBOUNCE_EXAMPLE_PATH, BINDPAD_EXAMPLE_PATH]
         if self.macro_addon.get() == "BindPad":
-            examples = [BINDPAD_EXAMPLE_PATH, DEBOUNCE_EXAMPLE_PATH]
+            examples = [BINDPAD_EXAMPLE_PATH, DEBIND_EXAMPLE_PATH, DEBOUNCE_EXAMPLE_PATH]
+        elif self.macro_addon.get() == "Debounce":
+            examples = [DEBOUNCE_EXAMPLE_PATH, DEBIND_EXAMPLE_PATH, BINDPAD_EXAMPLE_PATH]
         return (
             "Path to addon SavedVariables file",
             examples,
@@ -3377,7 +3462,7 @@ class App(ctk.CTk):
             raw = var.get().strip().strip('"')
             return Path(raw) if raw else None
 
-        addon = "BindPad" if self.macro_addon.get() == "BindPad" else "Debounce"
+        addon = addon_display_name(self.macro_addon.get())
         addon_candidates = find_addon_saved_variable_candidates(addon, var_path(self.debounce_path))
         config_candidates = likely_config_ini_candidates(var_path(self.ggl_config))
         lines = ["Auto detect complete.", ""]
@@ -3564,7 +3649,7 @@ class App(ctk.CTk):
     def collect_preflight_items(self, apply: bool) -> list[PreflightItem]:
         items: list[PreflightItem] = []
         section = self.section.get().strip()
-        macro_addon = "BindPad" if self.macro_addon.get() == "BindPad" else "Debounce"
+        macro_addon = addon_display_name(self.macro_addon.get())
         addon_path = Path(self.debounce_path.get().strip())
         ggl_config = Path(self.ggl_config.get().strip())
         seed_config = Path(self.seed_config.get().strip()) if self.seed_config.get().strip() else None
@@ -3575,14 +3660,14 @@ class App(ctk.CTk):
             selected_sections = self.selected_sections_for_run(macro_addon)
             self.add_preflight_item(items, "Class/spec", "OK", "Selected class/spec sections.")
             if macro_addon == "BindPad":
-                self.add_preflight_item(items, "Selected sections", "FAIL", "Multi-spec binding is Debounce-only for now.", True)
+                self.add_preflight_item(items, "Selected sections", "FAIL", "Multi-spec binding is Debind/Debounce-only for now.", True)
             elif selected_sections:
                 self.add_preflight_item(items, "Selected sections", "OK", f"{len(selected_sections)} class/spec section(s) selected.")
             else:
                 self.add_preflight_item(items, "Selected sections", "FAIL", "Choose at least one class/spec in the multi-spec list.", True)
         elif section:
             self.add_preflight_item(items, "Class/spec", "OK", section)
-            if macro_addon == "Debounce":
+            if macro_addon in ("Debind", "Debounce"):
                 try:
                     sync.section_to_debounce_target(section)
                 except (RuntimeError, ValueError, SystemExit) as exc:
@@ -3598,7 +3683,7 @@ class App(ctk.CTk):
 
         addon_ok = False
         if not addon_path.exists():
-            self.add_preflight_item(items, "Addon file", "FAIL", "Choose a valid Debounce.lua or BindPad.lua path.", True)
+            self.add_preflight_item(items, "Addon file", "FAIL", "Choose a valid Debind.lua, Debounce.lua, or BindPad.lua path.", True)
         else:
             try:
                 if macro_addon == "Debounce":
@@ -3615,6 +3700,19 @@ class App(ctk.CTk):
                     sync.parse_debounce_vars(text)
                     addon_ok = True
                     self.add_preflight_item(items, "Addon file", "OK", f"Debounce file found ({file_size_label(addon_path)}).")
+                elif macro_addon == "Debind":
+                    text, _encoding, _newline = sync.read_text(addon_path)
+                    vars_table = sync.parse_debind_vars(text)
+                    addon_ok = True
+                    self.add_preflight_item(items, "Addon file", "OK", f"Debind file found ({file_size_label(addon_path)}).")
+                    legacy_path = addon_path.with_name("Debounce.lua")
+                    if sync.debind_legacy_import_pending(legacy_path, vars_table):
+                        self.add_preflight_item(
+                            items,
+                            "Legacy Debounce.lua",
+                            "WARN",
+                            "An old Debounce.lua is still present. Applying will back it up and remove it so Debind's one-time migration cannot overwrite these binds.",
+                        )
                 else:
                     text, _encoding, _newline = sync.read_text(addon_path)
                     vars_table = sync.parse_bindpad_vars(text)
@@ -3905,6 +4003,8 @@ class App(ctk.CTk):
             return "Config.ini"
         if name == "debounce.lua":
             return "Debounce"
+        if name == "debind.lua":
+            return "Debind"
         if name == "bindpad.lua":
             return "BindPad"
         if name == settings_path().name.lower():
@@ -4286,13 +4386,13 @@ class App(ctk.CTk):
             text="Choose what to clear for the selected class/spec target:",
             style="Muted.TLabel",
         ).grid(row=0, column=0, sticky="w", pady=(0, 8))
-        ttk.Radiobutton(body, text="Both Config.ini and Debounce", variable=scope, value="both").grid(
+        ttk.Radiobutton(body, text="Both Config.ini and the bind addon", variable=scope, value="both").grid(
             row=1, column=0, sticky="w", pady=2
         )
         ttk.Radiobutton(body, text="Config.ini only", variable=scope, value="config").grid(
             row=2, column=0, sticky="w", pady=2
         )
-        ttk.Radiobutton(body, text="Debounce only", variable=scope, value="debounce").grid(
+        ttk.Radiobutton(body, text="Bind addon only", variable=scope, value="debounce").grid(
             row=3, column=0, sticky="w", pady=2
         )
         ttk.Label(
@@ -4344,20 +4444,29 @@ class App(ctk.CTk):
             addon_path: Path | None = None
             addon_text = ""
             addon_encoding = "utf-8"
+            addon_global = "DebounceVars"
             debounce_vars: dict[object, object] | None = None
             debounce_removed = 0
             if use_debounce:
-                if self.macro_addon.get() == "BindPad":
-                    raise RuntimeError("Debounce cleanup is unavailable while BindPad is selected.")
+                addon_name = addon_display_name(self.macro_addon.get())
+                if addon_name == "BindPad":
+                    raise RuntimeError("Addon cleanup is unavailable while BindPad is selected.")
                 addon_path = Path(self.debounce_path.get())
                 if not addon_path.exists():
-                    raise RuntimeError("Choose a valid Debounce.lua path.")
-                addon_path = normalize_debounce_path(addon_path)
-                self.debounce_path.set(str(addon_path))
-                addon_text, addon_encoding, _newline = sync.read_text(addon_path)
-                debounce_vars = sync.parse_debounce_vars(addon_text)
-                class_file, spec_index = sync.section_to_debounce_target(section)
-                debounce_removed = sync.clear_debounce_target(debounce_vars, class_file, spec_index)
+                    raise RuntimeError(f"Choose a valid {addon_name}.lua path.")
+                if addon_name == "Debounce":
+                    addon_path = normalize_debounce_path(addon_path)
+                    self.debounce_path.set(str(addon_path))
+                    addon_text, addon_encoding, _newline = sync.read_text(addon_path)
+                    debounce_vars = sync.parse_debounce_vars(addon_text)
+                    class_file, spec_index = sync.section_to_debounce_target(section)
+                    debounce_removed = sync.clear_debounce_target(debounce_vars, class_file, spec_index)
+                else:
+                    addon_text, addon_encoding, _newline = sync.read_text(addon_path)
+                    debounce_vars = sync.parse_debind_vars(addon_text)
+                    class_file, spec_index = sync.section_to_debind_target(section)
+                    debounce_removed = sync.clear_debind_target(debounce_vars, class_file, spec_index)
+                    addon_global = "DebindVars"
 
             config_raw = self.ggl_config.get().strip().strip('"')
             config_path = Path(config_raw) if config_raw else None
@@ -4382,15 +4491,15 @@ class App(ctk.CTk):
             self.ensure_cleanup_targets_available(selected_paths, config_path)
 
             scope_label = {
-                "debounce": "Debounce",
+                "debounce": addon_display_name(self.macro_addon.get()),
                 "config": "Config.ini",
-                "both": "Config.ini and Debounce",
+                "both": f"Config.ini and {addon_display_name(self.macro_addon.get())}",
             }[scope]
             confirmed = messagebox.askyesno(
                 "Remove Old Binds",
                 f"This will clear the selected {scope_label} binds in:\n\n"
                 f"{target}\n\n"
-                f"Debounce entries to remove: {debounce_removed}\n"
+                f"{addon_display_name(self.macro_addon.get())} entries to remove: {debounce_removed}\n"
                 f"Config.ini values to clear: {config_removed}\n\n"
                 "Backups will be created before writing. WoW and the loader must be restarted or reloaded afterward.\n\n"
                 "Continue?",
@@ -4406,10 +4515,10 @@ class App(ctk.CTk):
             try:
                 if use_debounce and debounce_vars is not None and addon_path is not None and debounce_removed:
                     backups.append(sync.backup_file(addon_path))
-                    addon_output = "DebounceVars = " + sync.dump_lua(debounce_vars) + "\n"
+                    addon_output = addon_global + " = " + sync.dump_lua(debounce_vars) + "\n"
                     sync.write_text(addon_path, addon_output, addon_encoding)
                     if sync.read_text(addon_path)[0] != addon_output:
-                        raise RuntimeError("Debounce verification failed after cleanup.")
+                        raise RuntimeError(f"{addon_display_name(self.macro_addon.get())} verification failed after cleanup.")
                     changed_paths.append(addon_path)
 
                 if use_config and config_removed and config_path is not None:
@@ -4431,7 +4540,7 @@ class App(ctk.CTk):
                 raise
 
             details = [
-                f"Debounce: removed {debounce_removed} entries from {target}." if use_debounce else "Debounce: unchanged.",
+                f"{addon_display_name(self.macro_addon.get())}: removed {debounce_removed} entries from {target}." if use_debounce else f"{addon_display_name(self.macro_addon.get())}: unchanged.",
                 f"Config.ini: cleared {config_removed} values in {target}." if use_config else "Config.ini: unchanged.",
             ]
             backup_text = "\n".join(f"Backup: {backup}" for backup in backups) if backups else "No changes were needed; no backup was created."
@@ -4670,14 +4779,14 @@ class App(ctk.CTk):
         return general_action_names(load_action_names(ggl_config, "General"))
 
     def playable_sections_for_current_config(self, macro_addon: str | None = None) -> list[str]:
-        addon = macro_addon or ("BindPad" if self.macro_addon.get() == "BindPad" else "Debounce")
+        addon = addon_display_name(macro_addon or self.macro_addon.get())
         sections = self.express_playable_sections(self.available_sections)
         if not sections:
             config_raw = self.ggl_config.get().strip()
             if not config_raw:
                 return []
             sections = self.express_playable_sections(load_sections(Path(config_raw)))
-        if addon == "Debounce":
+        if addon in ("Debounce", "Debind"):
             supported = []
             for section in sections:
                 try:
@@ -5013,7 +5122,7 @@ class App(ctk.CTk):
             )
             return
         if not macro_name:
-            messagebox.showerror("Custom Pixel", "Enter the macro name to create in Debounce.")
+            messagebox.showerror("Custom Pixel", f"Enter the macro name to create in {addon_display_name(self.macro_addon.get())}.")
             return
         self.upsert_custom_pixel(
             target_section,
@@ -5347,9 +5456,9 @@ class App(ctk.CTk):
                 raise RuntimeError("Choose a class/spec first.")
 
             addon_path = Path(self.debounce_path.get())
-            macro_addon = "BindPad" if self.macro_addon.get() == "BindPad" else "Debounce"
+            macro_addon = addon_display_name(self.macro_addon.get())
             if multi_section and macro_addon == "BindPad":
-                raise RuntimeError("Multi-spec binding is Debounce-only for now.")
+                raise RuntimeError("Multi-spec binding is Debind/Debounce-only for now.")
             bindpad_profile = self.active_bindpad_profile_key()
             ggl_config = Path(self.ggl_config.get())
             seed_config = Path(self.seed_config.get()) if self.seed_config.get().strip() else None
@@ -5367,12 +5476,18 @@ class App(ctk.CTk):
             if not enabled_mods and not allow_unmodified:
                 raise RuntimeError("Choose at least one modifier, or allow no-modifier binds.")
             if not addon_path.exists():
-                raise RuntimeError("Choose a valid Debounce.lua or BindPad.lua path.")
+                raise RuntimeError("Choose a valid Debind.lua, Debounce.lua, or BindPad.lua path.")
             if macro_addon == "Debounce":
                 normalized_debounce_path = normalize_debounce_path(addon_path)
                 if normalized_debounce_path != addon_path:
                     addon_path = normalized_debounce_path
                     self.debounce_path.set(str(addon_path))
+            elif macro_addon == "Debind":
+                try:
+                    text, _, _ = sync.read_text(addon_path)
+                    sync.parse_debind_vars(text)
+                except Exception as exc:
+                    raise RuntimeError("Choose a valid Debind.lua SavedVariables file.") from exc
             else:
                 try:
                     text, _, _ = sync.read_text(addon_path)

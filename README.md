@@ -4,7 +4,7 @@ Windows utility for generating matching keybinds between a loader `Config.ini` a
 
 The app is built around a preview-first workflow:
 
-1. Choose Debounce or BindPad.
+1. Choose Debind, Debounce, or BindPad.
 2. Select the addon SavedVariables file and `Config.ini`.
 3. Pick a class/spec.
 4. Preview the generated keybind plan.
@@ -14,7 +14,8 @@ The app is built around a preview-first workflow:
 
 - Express setup for quick configuration.
 - Advanced tab for full control.
-- Debounce and BindPad support.
+- Debind, Debounce, and BindPad support.
+- Debind is the current name of the Debounce addon (3.x); it stores settings in `SavedVariables\Debind.lua`. Old `Debounce.lua` files are detected and neutralized on Apply so Debind's one-time migration cannot overwrite new binds.
 - Class/spec action loading from `Config.ini`.
 - Spell/action toggles per class/spec.
 - Custom macro CSV import and template export.
@@ -28,7 +29,7 @@ The app is built around a preview-first workflow:
 - Keyboard layout profiles, including US QWERTY, German QWERTZ, and International Safe.
 - Preview CSV reports before writes.
 - Backups before Apply and cleanup writes.
-- Scoped cleanup for the selected Config.ini section and/or Debounce target, with backups and post-write verification.
+- Scoped cleanup for the selected Config.ini section and/or bind addon target, with backups and post-write verification.
 - Renamed-loader detection based on the selected `Config.ini` folder, plus an optional explicit loader path.
 - File-in-use checks, post-write verification, and automatic rollback when an Apply fails.
 - Preflight setup checks.
@@ -77,7 +78,7 @@ Please include:
 
 - app version
 - class/spec
-- Debounce or BindPad
+- Debind, Debounce, or BindPad
 - Express or Advanced
 - what action failed
 - whether Preview showed a key

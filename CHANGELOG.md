@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.0
+
+- Added Debind support. Debounce 3.x was renamed to Debind and now stores its settings in `SavedVariables\Debind.lua` as an account-wide `DebindVars` table (`dbver = 5`) with layers under `shared.GENERAL` and `shared.classes[class][spec]`.
+- Debind is now the default addon choice; Debounce and BindPad remain fully supported.
+- Debind actions are marked with a `$wowKeybindSync` field because Debind strips unknown action fields (including `source`) from its saved data on login.
+- When Debind is selected and an old `Debounce.lua` is still present, the app backs it up and removes it on Apply so Debind's one-time migration cannot overwrite the newly written binds.
+- Added the `--addon debind|debounce` and `--debind-path` command line options.
+- The Advanced cleanup action now clears Debind layers as well as Debounce.
+
 ## 1.3.5
 
 - Replaces legacy NumLock-off aliases such as `NUMPAGEDOWN`, `NUMPADPAGEDOWN`, `NUMPAGEUP`, and `NUMPADPAGEUP` instead of leaving stale entries beside the new numeric NumPad binds.
