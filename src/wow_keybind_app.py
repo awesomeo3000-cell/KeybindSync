@@ -24,7 +24,7 @@ import customtkinter as ctk
 import wow_keybind_sync as sync
 
 
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.4.1"
 
 
 def general_action_names(names: set[str] | list[str]) -> set[str]:

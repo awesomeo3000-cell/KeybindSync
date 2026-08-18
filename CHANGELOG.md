@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.1
+
+- Fixed a `NameError: 'bindpad_numeric_slots' is not defined` crash when applying BindPad binds or running cleanup. The helper function was accidentally dropped in the v1.4.0 Debind refactor.
+
 ## 1.4.0
 
 - Added Debind support. Debounce 3.x was renamed to Debind and now stores its settings in `SavedVariables\Debind.lua` as an account-wide `DebindVars` table (`dbver = 5`) with layers under `shared.GENERAL` and `shared.classes[class][spec]`.

@@ -1869,6 +1869,9 @@ def update_debind(
 
     debind_scaffolding(vars_table)
     return len(new_actions)
+
+
+def bindpad_numeric_slots(table: dict[Any, Any]) -> list[Any]:
     slots = [(key, value) for key, value in table.items() if isinstance(key, int) and key >= 1]
     return [value for _, value in sorted(slots, key=lambda item: item[0])]
 
