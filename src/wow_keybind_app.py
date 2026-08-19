@@ -201,7 +201,7 @@ def ctk_theme(key: str) -> tuple[str, str]:
     return LIGHT_THEME[key], DARK_THEME[key]
 
 
-PAGE_SCROLL_MULTIPLIER = 3
+PAGE_SCROLL_MULTIPLIER = 2
 INNER_SCROLL_UNITS = 3
 
 
@@ -209,6 +209,9 @@ class PageScrollableFrame(ctk.CTkScrollableFrame):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._nested_scroll_roots: set[tk.Widget] = set()
+        self._pending_scroll = 0
+        self._pending_scroll_horizontal = False
+        self._scroll_flush_job: str | None = None
 
     def add_nested_scroll_root(self, widget: tk.Widget) -> None:
         for attr in ("_parent_canvas", "_parent_frame", "_scrollbar"):
@@ -237,18 +240,46 @@ class PageScrollableFrame(ctk.CTkScrollableFrame):
             return -int(event.delta / 6) * PAGE_SCROLL_MULTIPLIER
         return -event.delta * PAGE_SCROLL_MULTIPLIER
 
+    def _can_scroll(self, horizontal: bool) -> bool:
+        try:
+            view = self._parent_canvas.xview() if horizontal else self._parent_canvas.yview()
+        except tk.TclError:
+            return False
+        return view != (0.0, 1.0)
+
     def scroll_units(self, units: int, horizontal: bool = False) -> bool:
+        # Every widget inside the canvas is a real window that Tk has to move on
+        # each scroll, so the cost of a scroll is driven by the widget count, not
+        # the distance. Queue the delta and apply the whole burst in one repaint
+        # instead of repainting once per wheel event.
+        if not units or not self._can_scroll(horizontal):
+            return False
+        if self._pending_scroll and horizontal != self._pending_scroll_horizontal:
+            self._flush_scroll()
+        self._pending_scroll_horizontal = horizontal
+        self._pending_scroll += units
+        if self._scroll_flush_job is None:
+            self._scroll_flush_job = self.after_idle(self._flush_scroll)
+        return True
+
+    def _flush_scroll(self) -> None:
+        self._scroll_flush_job = None
+        units = self._pending_scroll
+        self._pending_scroll = 0
         if not units:
-            return False
-        if horizontal:
-            if self._parent_canvas.xview() != (0.0, 1.0):
+            return
+        horizontal = self._pending_scroll_horizontal
+        try:
+            if not self._parent_canvas.winfo_exists():
+                return
+            if not self._can_scroll(horizontal):
+                return
+            if horizontal:
                 self._parent_canvas.xview("scroll", units, "units")
-                return True
-            return False
-        if self._parent_canvas.yview() != (0.0, 1.0):
-            self._parent_canvas.yview("scroll", units, "units")
-            return True
-        return False
+            else:
+                self._parent_canvas.yview("scroll", units, "units")
+        except tk.TclError:
+            pass
 
     def scroll_from_wheel_event(self, event: tk.Event) -> bool:
         return self.scroll_units(self._wheel_units(event), horizontal=self._shift_pressed)
@@ -1066,12 +1097,13 @@ class App(ctk.CTk):
         ctk.set_default_color_theme("blue")
         super().__init__()
         self.title("WoW Keybind Sync")
-        self.geometry("980x720")
+        self.geometry(f"980x{self._preferred_window_height()}")
         self.minsize(760, 520)
         self.configure(bg=THEME["bg"])
         self._apply_theme()
         self.page_canvas: tk.Canvas | None = None
         self.page_scroll_exempt_widgets: set[tk.Widget] = set()
+        self.tab_scroll_frames: dict[str, PageScrollableFrame] = {}
         self.action_search_text = ""
         self.action_search_time = 0.0
         self.last_log_text = ""
@@ -1199,6 +1231,15 @@ class App(ctk.CTk):
         self.after(250, self.prompt_for_missing_paths)
         self.after(1000, self.poll_numlock_status)
 
+    def _preferred_window_height(self) -> int:
+        # The Advanced tab is around 1500px tall. Opening as tall as the screen
+        # comfortably allows means most of it is on screen and scrolling is rare.
+        try:
+            screen_height = self.winfo_screenheight()
+        except tk.TclError:
+            return 720
+        return max(720, min(1040, screen_height - 120))
+
     def _apply_theme(self) -> None:
         style = ttk.Style(self)
         for theme in ("vista", "xpnative", "default"):
@@ -1261,19 +1302,13 @@ class App(ctk.CTk):
         self.section_combos = []
         self.bindpad_profile_combos = []
         self.built_tabs: set[str] = set()
+        self.tab_scroll_frames: dict[str, PageScrollableFrame] = {}
 
         shell = ctk.CTkFrame(self, fg_color=ctk_theme("bg"), corner_radius=0)
         self.shell = shell
         shell.pack(fill="both", expand=True)
 
-        outer = PageScrollableFrame(
-            shell,
-            fg_color=ctk_theme("bg"),
-            corner_radius=0,
-            scrollbar_button_color=ctk_theme("scrollbar"),
-            scrollbar_button_hover_color=ctk_theme("scrollbar_hover"),
-        )
-        self.page_scroll_frame = outer
+        outer = ctk.CTkFrame(shell, fg_color=ctk_theme("bg"), corner_radius=0)
         outer.pack(fill="both", expand=True, padx=12, pady=12)
 
         header = ctk.CTkFrame(
@@ -1316,13 +1351,35 @@ class App(ctk.CTk):
         )
         self.notebook = notebook
         notebook.pack(fill="both", expand=True)
-        self.express_tab = notebook.add("Express")
-        self.advanced_tab = notebook.add("Advanced")
+        # Each tab scrolls its own body. Keeping the header and the tab strip
+        # outside the scrolling canvas keeps hundreds of widgets from having to
+        # be moved on every scroll step.
+        self.express_tab = self._add_scrolling_tab(notebook, "Express")
+        self.advanced_tab = self._add_scrolling_tab(notebook, "Advanced")
         target_tab = active_tab if active_tab in {"Express", "Advanced"} else "Express"
         self.select_tab(target_tab)
         if not lazy:
             for tab_name in ("Express", "Advanced"):
                 self.build_tab_if_needed(tab_name)
+
+    def _add_scrolling_tab(self, notebook: ctk.CTkTabview, tab_name: str) -> PageScrollableFrame:
+        tab = notebook.add(tab_name)
+        scroll = PageScrollableFrame(
+            tab,
+            fg_color=ctk_theme("bg"),
+            corner_radius=0,
+            scrollbar_button_color=ctk_theme("scrollbar"),
+            scrollbar_button_hover_color=ctk_theme("scrollbar_hover"),
+        )
+        scroll.pack(fill="both", expand=True)
+        self.tab_scroll_frames[tab_name] = scroll
+        self.page_scroll_frame = scroll
+        return scroll
+
+    def _activate_tab_scroll_frame(self, tab_name: str) -> None:
+        scroll = self.tab_scroll_frames.get(tab_name)
+        if scroll is not None:
+            self.page_scroll_frame = scroll
 
     def clear_built_widget_refs(self) -> None:
         for name in (
@@ -1407,21 +1464,27 @@ class App(ctk.CTk):
                 self.action_button_row.grid()
 
     def build_tab_if_needed(self, tab_name: str) -> None:
-        if tab_name in getattr(self, "built_tabs", set()):
-            return
-        if tab_name == "Express":
-            self._build_express_tab(self.express_tab)
-            self.refresh_express_section_picker()
-            self.refresh_express_status()
-        elif tab_name == "Advanced":
-            self._build_advanced_tab(self.advanced_tab)
-            self.apply_bindpad_profile_combo_cache()
-            self.refresh_advanced_section_picker()
-            self.refresh_action_list()
-            self.refresh_custom_controls()
-        else:
-            return
-        self.built_tabs.add(tab_name)
+        if tab_name not in getattr(self, "built_tabs", set()):
+            # The build registers nested scroll roots against page_scroll_frame,
+            # so point it at this tab while building even if another tab is shown.
+            self._activate_tab_scroll_frame(tab_name)
+            if tab_name == "Express":
+                self._build_express_tab(self.express_tab)
+                self.refresh_express_section_picker()
+                self.refresh_express_status()
+            elif tab_name == "Advanced":
+                self._build_advanced_tab(self.advanced_tab)
+                self.apply_bindpad_profile_combo_cache()
+                self.refresh_advanced_section_picker()
+                self.refresh_action_list()
+                self.refresh_custom_controls()
+            else:
+                return
+            self.built_tabs.add(tab_name)
+        try:
+            self._activate_tab_scroll_frame(self.notebook.get())
+        except (AttributeError, tk.TclError):
+            pass
 
     def _prewarm_tabs(self) -> None:
         try:
