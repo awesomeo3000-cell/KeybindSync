@@ -63,7 +63,8 @@ class DebindUpdateTests(unittest.TestCase):
         self.assertEqual(action["name"], "Charge")
         self.assertEqual(action["value"], "/cast Charge")
         self.assertEqual(action["key"], "Q")
-        self.assertTrue(action[sync.DEBIND_MANAGED_MARKER])
+        self.assertNotIn(sync.DEBIND_MANAGED_MARKER, action)
+        self.assertNotIn(sync.DEBIND_MANAGED_MARKER, sync.dump_lua(vars_table))
         self.assertIn("characters", vars_table)
         self.assertIn("migrated", vars_table)
         self.assertIn("options", vars_table)
@@ -110,6 +111,13 @@ class DebindUpdateTests(unittest.TestCase):
         self.assertIn("User Action", names)
         self.assertIn("Charge", names)
         self.assertNotIn("Old Managed", names)
+        self.assertTrue(
+            all(
+                sync.DEBIND_MANAGED_MARKER not in action
+                for action in layer
+                if isinstance(action, dict)
+            )
+        )
 
     def test_update_debind_removes_by_name_and_key_when_replacing(self) -> None:
         vars_table = {

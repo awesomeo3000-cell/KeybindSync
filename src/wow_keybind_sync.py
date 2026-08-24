@@ -43,9 +43,11 @@ BINDPAD_PROFILE_VERSION = 252
 MAX_LUA_DEPTH = 200
 
 # Debind (Debounce 3.x) keeps an account-wide `DebindVars` table with `dbver = 5`.
-# Its CleanUpDB strips any action field that is not in KEYS_TO_SAVE, except keys
-# that start with `$`, so managed actions are marked with a `$`-prefixed field
-# instead of `source`.
+# Debind treats every action field starting with `$` as a custom-switch
+# condition.  The old writer used this value as a persistence marker, which
+# made Debind display "When the Switch Is On" and prevented the action from
+# firing when no such switch existed.  Keep the value only to identify and
+# remove legacy actions; never write it to new actions.
 DEBIND_DB_VERSION = 5
 DEBIND_MANAGED_MARKER = "$wowKeybindSync"
 _NUM_RE = re.compile(
@@ -1815,7 +1817,6 @@ def update_debind(
             "value": plan.macro,
             "icon": plan.icon,
             "key": plan.key.debounce(selected_layout),
-            DEBIND_MANAGED_MARKER: True,
         }
         new_actions.append(action)
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.2
+
+- Fixed Debind actions being written with `$wowKeybindSync`. Debind interprets every `$...` action field as a custom-switch condition, so the old field caused actions to show `When the Switch Is On` and never fire unless that switch existed.
+- New Debind actions no longer contain the switch marker. Existing legacy actions with that marker are removed and replaced without it when the affected section is applied.
+- Reduced main-window scroll repaint work and coalesced wheel events for smoother scrolling.
+
 ## 1.4.1
 
 - Fixed a `NameError: 'bindpad_numeric_slots' is not defined` crash when applying BindPad binds or running cleanup. The helper function was accidentally dropped in the v1.4.0 Debind refactor.
@@ -8,7 +14,6 @@
 
 - Added Debind support. Debounce 3.x was renamed to Debind and now stores its settings in `SavedVariables\Debind.lua` as an account-wide `DebindVars` table (`dbver = 5`) with layers under `shared.GENERAL` and `shared.classes[class][spec]`.
 - Debind is now the default addon choice; Debounce and BindPad remain fully supported.
-- Debind actions are marked with a `$wowKeybindSync` field because Debind strips unknown action fields (including `source`) from its saved data on login.
 - When Debind is selected and an old `Debounce.lua` is still present, the app backs it up and removes it on Apply so Debind's one-time migration cannot overwrite the newly written binds.
 - Added the `--addon debind|debounce` and `--debind-path` command line options.
 - The Advanced cleanup action now clears Debind layers as well as Debounce.
