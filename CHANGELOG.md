@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.3
+
+- Fixed an Apply against a Debind profile newer than `dbver = 5` rewriting the whole account. The app used to stamp its own `dbver` onto the file and add the legacy `customStates`/`options.blizzframes` tables, which made Debind's 5->6 login migration replace the real `switches` table and frame blacklist with those empty ones. That wiped switch definitions and frame exclusions for every class, not just the selected spec.
+- The stored `dbver` is now preserved (never lowered), and the legacy tables are only added to profiles that are still on the old version.
+- Applying now also removes an empty legacy `customStates`/`options.blizzframes` left next to the modern `switches`/`options.frameBlacklist` by an earlier version, so an already-affected file is repaired on the next Apply.
+
 ## 1.4.2
 
 - Fixed Debind actions being written with `$wowKeybindSync`. Debind interprets every `$...` action field as a custom-switch condition, so the old field caused actions to show `When the Switch Is On` and never fire unless that switch existed.

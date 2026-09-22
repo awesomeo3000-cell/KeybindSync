@@ -80,6 +80,83 @@ class DebindUpdateTests(unittest.TestCase):
         self.assertEqual(layer[0]["name"], "Execute")
         self.assertEqual(vars_table["dbver"], sync.DEBIND_DB_VERSION)
 
+    def test_update_debind_keeps_a_newer_profile_version(self) -> None:
+        vars_table = {
+            "dbver": 6,
+            "shared": {"classes": {}},
+            "switches": {"$burst": {"mode": "manual", "value": False}},
+            "options": {"frameBlacklist": {"blizzard": {"player": False}}},
+        }
+        plans = [plan("Execute", "E", "/cast Execute")]
+
+        sync.update_debind(vars_table, "WARRIOR", 2, plans, replace_managed=True)
+
+        self.assertEqual(vars_table["dbver"], 6)
+        self.assertNotIn("customStates", vars_table)
+        self.assertNotIn("blizzframes", vars_table["options"])
+        self.assertEqual(
+            vars_table["switches"], {"$burst": {"mode": "manual", "value": False}}
+        )
+        self.assertEqual(
+            vars_table["options"]["frameBlacklist"], {"blizzard": {"player": False}}
+        )
+
+    def test_update_debind_does_not_add_legacy_keys_beside_modern_ones(self) -> None:
+        vars_table = {
+            "dbver": 5,
+            "shared": {"classes": {}},
+            "switches": {},
+            "options": {"frameBlacklist": {}},
+        }
+        plans = [plan("Execute", "E", "/cast Execute")]
+
+        sync.update_debind(vars_table, "WARRIOR", 2, plans, replace_managed=True)
+
+        self.assertNotIn("customStates", vars_table)
+        self.assertNotIn("blizzframes", vars_table["options"])
+
+    def test_update_debind_writes_legacy_scaffolding_for_an_old_profile(self) -> None:
+        vars_table: dict = {}
+        plans = [plan("Execute", "E", "/cast Execute")]
+
+        sync.update_debind(vars_table, "WARRIOR", 2, plans, replace_managed=True)
+
+        self.assertEqual(vars_table["dbver"], sync.DEBIND_DB_VERSION)
+        self.assertEqual(vars_table["customStates"], {})
+        self.assertEqual(vars_table["options"]["blizzframes"], {})
+
+    def test_update_debind_drops_empty_legacy_tables_left_by_old_versions(self) -> None:
+        vars_table = {
+            "dbver": 5,
+            "shared": {"classes": {}},
+            "switches": {"$burst": {"mode": "manual"}},
+            "customStates": {},
+            "options": {
+                "frameBlacklist": {"blizzard": {"player": False}},
+                "blizzframes": {},
+            },
+        }
+        plans = [plan("Execute", "E", "/cast Execute")]
+
+        sync.update_debind(vars_table, "WARRIOR", 2, plans, replace_managed=True)
+
+        self.assertNotIn("customStates", vars_table)
+        self.assertNotIn("blizzframes", vars_table["options"])
+        self.assertEqual(vars_table["switches"], {"$burst": {"mode": "manual"}})
+
+    def test_update_debind_keeps_non_empty_legacy_tables(self) -> None:
+        vars_table = {
+            "dbver": 5,
+            "shared": {"classes": {}},
+            "switches": {},
+            "customStates": {"$burst": {"mode": 1}},
+        }
+        plans = [plan("Execute", "E", "/cast Execute")]
+
+        sync.update_debind(vars_table, "WARRIOR", 2, plans, replace_managed=True)
+
+        self.assertEqual(vars_table["customStates"], {"$burst": {"mode": 1}})
+
     def test_update_debind_replaces_managed_and_keeps_other_actions(self) -> None:
         vars_table = {
             "shared": {
@@ -172,6 +249,21 @@ class DebindUpdateTests(unittest.TestCase):
 
         self.assertEqual(removed, 1)
         self.assertEqual(vars_table["shared"]["GENERAL"], {})
+
+    def test_clear_debind_target_keeps_a_newer_profile_version(self) -> None:
+        vars_table = {
+            "dbver": 6,
+            "shared": {"GENERAL": {1: {"name": "old general"}}, "classes": {}},
+            "switches": {"$burst": {"mode": "manual"}},
+            "options": {"frameBlacklist": {"blizzard": {"player": False}}},
+        }
+
+        sync.clear_debind_target(vars_table, "GENERAL", None)
+
+        self.assertEqual(vars_table["dbver"], 6)
+        self.assertNotIn("customStates", vars_table)
+        self.assertNotIn("blizzframes", vars_table["options"])
+        self.assertEqual(vars_table["switches"], {"$burst": {"mode": "manual"}})
 
 
 class DebindLegacyTests(unittest.TestCase):

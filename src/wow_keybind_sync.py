@@ -42,7 +42,13 @@ BINDPAD_DEFAULT_SLOTS = 49
 BINDPAD_PROFILE_VERSION = 252
 MAX_LUA_DEPTH = 200
 
-# Debind (Debounce 3.x) keeps an account-wide `DebindVars` table with `dbver = 5`.
+# Debind (Debounce 3.x) keeps an account-wide `DebindVars` table whose stored
+# `dbver` selects the migration Debind runs over the whole account at login.
+# This app was written against `dbver = 5`; newer profiles are left at their own
+# version and are never stamped back down, because Debind would re-run the old
+# steps and the 5->6 step replaces `switches` with a legacy `customStates` table
+# and folds `options.blizzframes` over `options.frameBlacklist`.
+#
 # Debind treats every action field starting with `$` as a custom-switch
 # condition.  The old writer used this value as a persistence marker, which
 # made Debind display "When the Switch Is On" and prevented the action from
@@ -1768,10 +1774,40 @@ def debind_layer_tables(
 
 
 def debind_scaffolding(vars_table: dict[Any, Any]) -> None:
-    vars_table["dbver"] = DEBIND_DB_VERSION
-    vars_table.setdefault("options", {}).setdefault("blizzframes", {})
+    """Add only the keys a Debind profile needs, without moving it backwards.
+
+    Debind upgrades a profile in place from its stored `dbver` at login, over the
+    whole account.  Stamping this app's known version onto a newer profile makes
+    Debind re-run old steps: the 5->6 step assigns `switches = customStates` and
+    folds `options.blizzframes` over `options.frameBlacklist`, so an empty
+    scaffold written here would wipe every switch definition and frame exclusion
+    on every class.  Keep the stored version, and never write the legacy
+    spellings beside the modern ones.
+    """
+    stored = vars_table.get("dbver")
+    if isinstance(stored, bool) or not isinstance(stored, int):
+        stored = DEBIND_DB_VERSION
+    newer_profile = stored > DEBIND_DB_VERSION
+    vars_table["dbver"] = max(stored, DEBIND_DB_VERSION)
+    options = vars_table.setdefault("options", {})
+    if not isinstance(options, dict):
+        options = {}
+        vars_table["options"] = options
+    if not newer_profile:
+        # An empty legacy table beside the modern one is this app's own old stamp,
+        # left behind by a version that forced `dbver = 5`; drop it so Debind's
+        # 5->6 step cannot assign the empty table over the real one.
+        if "switches" in vars_table:
+            if isinstance(vars_table.get("customStates"), dict) and not vars_table["customStates"]:
+                vars_table.pop("customStates", None)
+        else:
+            vars_table.setdefault("customStates", {})
+        if "frameBlacklist" in options:
+            if isinstance(options.get("blizzframes"), dict) and not options["blizzframes"]:
+                options.pop("blizzframes", None)
+        else:
+            options.setdefault("blizzframes", {})
     vars_table.setdefault("ui", {})
-    vars_table.setdefault("customStates", {})
     vars_table.setdefault("characters", {})
     vars_table.setdefault("migrated", {})
 
