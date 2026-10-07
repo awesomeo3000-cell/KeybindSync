@@ -96,6 +96,13 @@ SPEC_INDEX = {
     "Evoker": ["Devastation", "Preservation", "Augmentation"],
 }
 
+# Class names as they appear in non-retail loader sections: "Classic Paladin",
+# "TBC Druid", "CATA DeathKnight", "MOP DeathKnight".
+CLASS_NAME_ALIASES = {
+    re.sub(r"[\s_]+", "", class_name).lower(): class_file
+    for class_name, class_file in CLASS_FILES.items()
+}
+
 SCAN_CODES: dict[str, int] = {
     "1": 2,
     "2": 3,
@@ -1348,6 +1355,25 @@ def retail_debounce_target_from_section(section: str) -> tuple[str, int | None] 
     return class_file, spec_index
 
 
+def class_only_target_from_section(section: str) -> tuple[str, int | None] | None:
+    """Map class-only loader sections such as "Classic Paladin" or "CATA DeathKnight".
+
+    Debind supports World of Warcraft: Forever, where every class has a single
+    specialization, so a section that names only the class targets that class's
+    spec 1 layer.
+    """
+    if " - " in section:
+        return None
+    tokens = [token for token in re.split(r"[\s_]+", section.strip()) if token]
+    if not tokens:
+        return None
+    for candidate in (tokens[-1], "".join(tokens[-2:])):
+        class_file = CLASS_NAME_ALIASES.get(candidate.lower())
+        if class_file:
+            return class_file, 1
+    return None
+
+
 def section_to_debounce_target(section: str) -> tuple[str, int | None]:
     target = retail_debounce_target_from_section(section)
     if target:
@@ -1362,6 +1388,9 @@ def section_to_debounce_target(section: str) -> tuple[str, int | None]:
 
 def section_to_debind_target(section: str) -> tuple[str, int | None]:
     target = retail_debounce_target_from_section(section)
+    if target:
+        return target
+    target = class_only_target_from_section(section)
     if target:
         return target
     if " - " not in section:

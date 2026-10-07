@@ -46,6 +46,28 @@ class DebindParseTests(unittest.TestCase):
         self.assertEqual(class_file, "GENERAL")
         self.assertIsNone(spec_index)
 
+    def test_section_to_debind_target_maps_class_only_sections(self) -> None:
+        cases = {
+            "Classic Paladin": ("PALADIN", 1),
+            "TBC Paladin": ("PALADIN", 1),
+            "Classic Druid": ("DRUID", 1),
+            "WOTLK DeathKnight": ("DEATHKNIGHT", 1),
+            "CATA DeathKnight": ("DEATHKNIGHT", 1),
+            "MOP DeathKnight": ("DEATHKNIGHT", 1),
+            "Classic Death Knight": ("DEATHKNIGHT", 1),
+        }
+        for section, expected in cases.items():
+            with self.subTest(section=section):
+                self.assertEqual(sync.section_to_debind_target(section), expected)
+
+    def test_section_to_debind_target_rejects_unknown_class_only_sections(self) -> None:
+        with self.assertRaises(SystemExit):
+            sync.section_to_debind_target("Classic Beholder")
+
+    def test_section_to_debounce_target_still_requires_retail_sections(self) -> None:
+        with self.assertRaises(SystemExit):
+            sync.section_to_debounce_target("Classic Paladin")
+
 
 class DebindUpdateTests(unittest.TestCase):
     def test_update_debind_writes_shared_general_layer(self) -> None:

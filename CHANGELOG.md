@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.4
+
+- Debind now accepts class-only loader sections such as `Classic Paladin`, `TBC Paladin`, `CATA DeathKnight`, and `MOP DeathKnight`. These are used on WoW: Forever, where every class has a single specialization, so they target the class's spec 1 layer.
+- Debind preflight, preview, and batch spec filtering now validate sections with the Debind target instead of always using the Debounce target, so error messages and supported-section lists name the selected addon.
+
 ## 1.4.3
 
 - Fixed an Apply against a Debind profile newer than `dbver = 5` rewriting the whole account. The app used to stamp its own `dbver` onto the file and add the legacy `customStates`/`options.blizzframes` tables, which made Debind's 5->6 login migration replace the real `switches` table and frame blacklist with those empty ones. That wiped switch definitions and frame exclusions for every class, not just the selected spec.

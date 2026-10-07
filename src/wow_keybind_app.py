@@ -24,7 +24,7 @@ import customtkinter as ctk
 import wow_keybind_sync as sync
 
 
-APP_VERSION = "1.4.3"
+APP_VERSION = "1.4.4"
 
 
 def general_action_names(names: set[str] | list[str]) -> set[str]:
@@ -303,6 +303,12 @@ ADDON_NAMES = ("Debind", "Debounce", "BindPad")
 
 def addon_display_name(macro_addon: str) -> str:
     return macro_addon if macro_addon in ADDON_NAMES else "Debounce"
+
+
+def section_target_for_addon(macro_addon: str) -> Callable[[str], tuple[str, int | None]]:
+    if addon_display_name(macro_addon) == "Debind":
+        return sync.section_to_debind_target
+    return sync.section_to_debounce_target
 
 
 def app_dir() -> Path:
@@ -894,7 +900,7 @@ def run_once(
     if macro_addon == "BindPad":
         spec_index = sync.bindpad_spec_index_for_section(section)
     else:
-        class_file, spec_index = sync.section_to_debounce_target(section)
+        class_file, spec_index = section_target_for_addon(macro_addon)(section)
     planned_macro_names = {entry.name for entry in entries}
     if macro_overrides:
         planned_macro_names.update(override.name for override in macro_overrides.values() if override.name)
@@ -3732,7 +3738,7 @@ class App(ctk.CTk):
             self.add_preflight_item(items, "Class/spec", "OK", section)
             if macro_addon in ("Debind", "Debounce"):
                 try:
-                    sync.section_to_debounce_target(section)
+                    section_target_for_addon(macro_addon)(section)
                 except (RuntimeError, ValueError, SystemExit) as exc:
                     self.add_preflight_item(items, "Class/spec target", "FAIL", str(exc), True)
             else:
@@ -4850,10 +4856,11 @@ class App(ctk.CTk):
                 return []
             sections = self.express_playable_sections(load_sections(Path(config_raw)))
         if addon in ("Debounce", "Debind"):
+            target_fn = section_target_for_addon(addon)
             supported = []
             for section in sections:
                 try:
-                    sync.section_to_debounce_target(section)
+                    target_fn(section)
                 except (RuntimeError, ValueError, SystemExit):
                     continue
                 supported.append(section)
